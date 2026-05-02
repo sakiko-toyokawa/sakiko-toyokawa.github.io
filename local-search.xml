@@ -4,6 +4,37 @@
   
   
   <entry>
+    <title>深度拆解：AI Agent 异步通信架构中的 SQ 与 EQ 模式</title>
+    <link href="/2026/05/02/%E6%B7%B1%E5%BA%A6%E6%8B%86%E8%A7%A3-AI-Agent-%E5%BC%82%E6%AD%A5%E9%80%9A%E4%BF%A1%E6%9E%B6%E6%9E%84%E4%B8%AD%E7%9A%84SQ%E4%B8%8EEQ%E6%A8%A1%E5%BC%8F/"/>
+    <url>/2026/05/02/%E6%B7%B1%E5%BA%A6%E6%8B%86%E8%A7%A3-AI-Agent-%E5%BC%82%E6%AD%A5%E9%80%9A%E4%BF%A1%E6%9E%B6%E6%9E%84%E4%B8%AD%E7%9A%84SQ%E4%B8%8EEQ%E6%A8%A1%E5%BC%8F/</url>
+    
+    <content type="html"><![CDATA[<h1 id="深度拆解：AI-Agent-异步通信架构中的-SQ-与-EQ-模式-——-构建可控、实时的智能体中枢"><a href="#深度拆解：AI-Agent-异步通信架构中的-SQ-与-EQ-模式-——-构建可控、实时的智能体中枢" class="headerlink" title="深度拆解：AI Agent 异步通信架构中的 SQ 与 EQ 模式 —— 构建可控、实时的智能体中枢"></a>深度拆解：AI Agent 异步通信架构中的 SQ 与 EQ 模式 —— 构建可控、实时的智能体中枢</h1><h2 id="前言：从”请求-响应”到”意图-流转”"><a href="#前言：从”请求-响应”到”意图-流转”" class="headerlink" title="前言：从”请求-响应”到”意图-流转”"></a>前言：从”请求-响应”到”意图-流转”</h2><p>在构建现代 AI Agent 系统（如 Codex）时，开发者面临的最大挑战是<strong>打破传统的同步思维</strong>。传统的 RESTful 架构中，前端发起 <code>POST</code> 请求，后端处理并返回 <code>200 OK</code>。但在 AI Agent 的世界里，这种模式显得力不从心。</p><p>想象一下：用户要求 AI “重构一个包含 5000 行代码的项目”。这背后涉及：</p><ol><li><strong>多步思考 (Chain of Thought)</strong>：耗时 10-60 秒。</li><li><strong>工具调用 (Tool Use)</strong>：读写文件、执行 Shell、调用外部 API。</li><li><strong>人在回路 (Human-in-the-loop)</strong>：遇到 <code>rm -rf</code> 等危险操作需要用户点击”确认”。</li><li><strong>实时反馈</strong>：用户需要实时看到 Agent 正在扫描哪个文件夹。</li></ol><p>为了处理这种高度不确定且长耗时的任务，<strong>SQ (Submission Queue) 与 EQ (Event Queue)</strong> 模式成为了解耦 Agent 复杂状态的首选方案。</p><hr><h2 id="1-核心定义：什么是-SQ-与-EQ？"><a href="#1-核心定义：什么是-SQ-与-EQ？" class="headerlink" title="1. 核心定义：什么是 SQ 与 EQ？"></a>1. 核心定义：什么是 SQ 与 EQ？</h2><p>在这一架构中，我们将通信拆分为两个完全独立的逻辑通道，分别处理”指令”与”状态”。</p><h3 id="SQ-Submission-Queue-——-指令提交"><a href="#SQ-Submission-Queue-——-指令提交" class="headerlink" title="SQ (Submission Queue) —— 指令提交"></a>SQ (Submission Queue) —— 指令提交</h3><p>SQ 是<strong>客户端 → 服务端</strong>的单向指令流。它通常被定义为一个强类型的 <code>Op</code> (Operation) 枚举。</p><ul><li><strong>本质</strong>：客户端对 Agent 的”意图注入”。</li><li><strong>非阻塞</strong>：客户端发送 <code>Op</code> 后，服务端仅回复”已接收”，而不代表任务完成。</li><li><strong>唯一性</strong>：每个 <code>Op</code> 携带一个唯一的 <code>submission_id</code>，用于后续事件的追踪。</li></ul><h3 id="EQ-Event-Queue-——-事件推送"><a href="#EQ-Event-Queue-——-事件推送" class="headerlink" title="EQ (Event Queue) —— 事件推送"></a>EQ (Event Queue) —— 事件推送</h3><p>EQ 是<strong>服务端 → 客户端</strong>的实时状态广播。它是运行在 WebSocket 或 gRPC Stream 之上的”事件流”。</p><ul><li><strong>本质</strong>：Agent 的”全透明实时动态”。</li><li><strong>打字机效果</strong>：通过细粒度的事件（Delta）实现极速反馈。</li><li><strong>关联性</strong>：每个 <code>EventMsg</code> 都会回填 <code>submission_id</code>，让前端知道这个进度属于哪个任务。</li></ul><hr><h2 id="2-架构深潜：基于-Rust-的状态建模"><a href="#2-架构深潜：基于-Rust-的状态建模" class="headerlink" title="2. 架构深潜：基于 Rust 的状态建模"></a>2. 架构深潜：基于 Rust 的状态建模</h2><p>在 Codex 的实践中，我们通过强类型语言（如 Rust）对这两者进行严格建模，以确保复杂交互下的协议安全性。</p><h3 id="2-1-SQ-Op-伪代码实现"><a href="#2-1-SQ-Op-伪代码实现" class="headerlink" title="2.1 SQ (Op) 伪代码实现"></a>2.1 SQ (Op) 伪代码实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">Op</span> <span class="token punctuation">&#123;</span>    <span class="token comment">/// 发起新对话</span>    <span class="token class-name">UserTurn</span> <span class="token punctuation">&#123;</span>        id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span>        content<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span>    <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// 中断当前运行的任务</span>    <span class="token class-name">Interrupt</span> <span class="token punctuation">&#123;</span>        submission_id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span>    <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// 针对授权请求的回应（批准或拒绝）</span>    <span class="token class-name">ExecApproval</span> <span class="token punctuation">&#123;</span>        submission_id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span>        is_approved<span class="token punctuation">:</span> <span class="token keyword">bool</span><span class="token punctuation">,</span>    <span class="token punctuation">&#125;</span><span class="token punctuation">,</span><span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure><h3 id="2-2-EQ-EventMsg-伪代码实现"><a href="#2-2-EQ-EventMsg-伪代码实现" class="headerlink" title="2.2 EQ (EventMsg) 伪代码实现"></a>2.2 EQ (EventMsg) 伪代码实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">EventMsg</span> <span class="token punctuation">&#123;</span>    <span class="token comment">/// 任务生命周期标记</span>    <span class="token class-name">TurnStarted</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// 思考逻辑流（内心独白）</span>    <span class="token class-name">AgentThoughtDelta</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// MCP 工具调用实况</span>    <span class="token class-name">ToolCallBegin</span> <span class="token punctuation">&#123;</span> tool<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> args<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// 实时终端输出</span>    <span class="token class-name">ExecOutputDelta</span> <span class="token punctuation">&#123;</span> chunk<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// 最终回复内容流</span>    <span class="token class-name">MessageDelta</span> <span class="token punctuation">&#123;</span> text<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>    <span class="token comment">/// 任务终结</span>    <span class="token class-name">TurnComplete</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span><span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure><hr><h2 id="3-通信时序：一个任务的生命周期"><a href="#3-通信时序：一个任务的生命周期" class="headerlink" title="3. 通信时序：一个任务的生命周期"></a>3. 通信时序：一个任务的生命周期</h2><p>以用户输入”重构 main.rs 文件”为例，系统内部的流转如下：</p><h3 id="第一阶段：提交-Submission"><a href="#第一阶段：提交-Submission" class="headerlink" title="第一阶段：提交 (Submission)"></a>第一阶段：提交 (Submission)</h3><ul><li><code>[Client -&gt; SQ]</code>: 发送 <code>Op::UserTurn</code> (ID: abc-123, “重构 main.rs”)。</li><li><code>[Server]</code>: 接收指令，入队执行引擎，瞬间返回 Ack。</li></ul><h3 id="第二阶段：执行与反馈-Event-Flow"><a href="#第二阶段：执行与反馈-Event-Flow" class="headerlink" title="第二阶段：执行与反馈 (Event Flow)"></a>第二阶段：执行与反馈 (Event Flow)</h3><ul><li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::TurnStarted</code> (ID: abc-123)。前端 UI 渲染 Loading 态。</li><li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::AgentThoughtDelta</code> (“正在分析依赖…”)。</li><li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::ToolCallBegin</code> (tool: read_file)。</li></ul><h3 id="第三阶段：人在回路-Interaction"><a href="#第三阶段：人在回路-Interaction" class="headerlink" title="第三阶段：人在回路 (Interaction)"></a>第三阶段：人在回路 (Interaction)</h3><p>Agent 发现需要安装新依赖，涉及 cargo add 权限：</p><ul><li><code>[Server -&gt; EQ]</code>: 发送 <code>EventMsg::ExecApprovalRequest</code>。</li><li><code>[Client -&gt; SQ]</code>: 用户查看 Diff 后发送 <code>Op::ExecApproval</code> (approved: true)。</li><li><code>[Server]</code>: 收到指令，继续执行。</li></ul><h3 id="第四阶段：收尾-Completion"><a href="#第四阶段：收尾-Completion" class="headerlink" title="第四阶段：收尾 (Completion)"></a>第四阶段：收尾 (Completion)</h3><ul><li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::MessageDelta</code> (“重构已完成…”)。</li><li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::TurnComplete</code> (ID: abc-123)。前端解除输入框锁定。</li></ul><hr><h2 id="4-架构优势：为什么要这么做？"><a href="#4-架构优势：为什么要这么做？" class="headerlink" title="4. 架构优势：为什么要这么做？"></a>4. 架构优势：为什么要这么做？</h2><h3 id="4-1-彻底解决长连接超时"><a href="#4-1-彻底解决长连接超时" class="headerlink" title="4.1 彻底解决长连接超时"></a>4.1 彻底解决长连接超时</h3><p>如果使用 HTTP 请求，AI 思考 1 分钟会导致网关超时。在 SQ&#x2F;EQ 模式下，连接只是一个”管道”，任务的状态被持久化在后端。即便网络波动，客户端重连后只需重新订阅 EQ，即可瞬间”找回”进度。</p><h3 id="4-2-极高的交互灵活性"><a href="#4-2-极高的交互灵活性" class="headerlink" title="4.2 极高的交互灵活性"></a>4.2 极高的交互灵活性</h3><p>通过 <code>Interrupt</code> 操作，用户可以随时叫停 Agent。这在同步模式下很难实现，因为同步请求往往处于阻塞状态，无法接收新的控制指令。</p><h3 id="4-3-真正实现”透明-AI”"><a href="#4-3-真正实现”透明-AI”" class="headerlink" title="4.3 真正实现”透明 AI”"></a>4.3 真正实现”透明 AI”</h3><p>传统的 Agent 像是一个黑盒，你不知道它在干什么。SQ&#x2F;EQ 模式通过细粒度的事件推送，将 AI 的思考逻辑、工具调用、报错信息实时展现在 UI 上，极大缓解了用户的等待焦虑。</p><hr><h2 id="5-总结"><a href="#5-总结" class="headerlink" title="5. 总结"></a>5. 总结</h2><p>在 AI Agent 的工程化道路上，SQ 与 EQ 模式是通往生产环境的必经之路。它将复杂的长耗时任务转化为可观察、可干预的事件流。</p><ul><li><strong>Op 是用户的意图。</strong></li><li><strong>EventMsg 是 AI 的呼吸。</strong></li></ul><p>通过这种异步解耦架构，我们不仅构建了一个好用的 AI 工具，更创造了一个可信、可控、实时互动的协作环境。</p>]]></content>
+    
+    
+    <categories>
+      
+      <category>技术深度解析</category>
+      
+    </categories>
+    
+    
+    <tags>
+      
+      <tag>AI</tag>
+      
+      <tag>Rust</tag>
+      
+      <tag>Architecture</tag>
+      
+      <tag>Frontend</tag>
+      
+    </tags>
+    
+  </entry>
+  
+  
+  
+  <entry>
     <title>Codex-rs 架构深度解析：从状态指令到声明式算力的演进</title>
     <link href="/2026/05/02/Codex-rs-%E6%9E%B6%E6%9E%84%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90-%E4%BB%8E%E7%8A%B6%E6%80%81%E6%8C%87%E4%BB%A4%E5%88%B0%E5%A3%B0%E6%98%8E%E5%BC%8F%E7%AE%97%E5%8A%9B%E7%9A%84%E6%BC%94%E8%BF%9B/"/>
     <url>/2026/05/02/Codex-rs-%E6%9E%B6%E6%9E%84%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90-%E4%BB%8E%E7%8A%B6%E6%80%81%E6%8C%87%E4%BB%A4%E5%88%B0%E5%A3%B0%E6%98%8E%E5%BC%8F%E7%AE%97%E5%8A%9B%E7%9A%84%E6%BC%94%E8%BF%9B/</url>
@@ -22,9 +53,9 @@
     
     <tags>
       
-      <tag>Codex-rs</tag>
-      
       <tag>架构设计</tag>
+      
+      <tag>Codex-rs</tag>
       
       <tag>AI</tag>
       
@@ -59,8 +90,6 @@
     
     <tags>
       
-      <tag>架构设计</tag>
-      
       <tag>Claude Code</tag>
       
       <tag>AI 工具</tag>
@@ -70,6 +99,8 @@
       <tag>TypeScript</tag>
       
       <tag>终端应用</tag>
+      
+      <tag>架构设计</tag>
       
     </tags>
     
