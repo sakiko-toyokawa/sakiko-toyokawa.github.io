@@ -27,7 +27,7 @@
 <meta property="og:description" content="构建可控、实时的智能体中枢——深入分析 SQ (Submission Queue) 与 EQ (Event Queue) 模式如何解耦 AI Agent 的复杂状态，将长耗时任务转化为可观察、可干预的事件流。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-02T04:00:00.000Z">
-<meta property="article:modified_time" content="2026-05-02T12:39:48.257Z">
+<meta property="article:modified_time" content="2026-05-02T12:53:23.983Z">
 <meta property="article:author" content="sakiko-toyokawa">
 <meta property="article:tag" content="AI">
 <meta property="article:tag" content="Architecture">
@@ -337,7 +337,7 @@
       <span class="post-meta mr-2">
         <i class="iconfont icon-chart"></i>
         
-          3.3k 字
+          4.2k 字
         
       </span>
     
@@ -348,7 +348,7 @@
         
         
         
-          28 分钟
+          36 分钟
         
       </span>
     
@@ -474,6 +474,43 @@
 
 <hr>
 <h2 id="4-通信时序：一个任务的生命周期"><a href="#4-通信时序：一个任务的生命周期" class="headerlink" title="4. 通信时序：一个任务的生命周期"></a>4. 通信时序：一个任务的生命周期</h2><p>以用户输入”重构 main.rs 文件”为例，系统内部的流转如下：</p>
+<figure><div class="code-wrapper"><pre class="mermaid">sequenceDiagram
+    participant U as 用户 (UI)
+    participant C as 客户端 (Frontend)
+    participant SQ as Submission Queue (指令流)
+    participant S as 服务端 (Agent Engine)
+    participant EQ as Event Queue (事件流)
+
+    Note over U, S: 第一阶段：指令提交 (Submission)
+    U->>C: 输入"重构 main.rs"并回车
+    C->>SQ: 发送 Op::UserTurn (ID: abc-123)
+    SQ-->>C: 网络层 Ack (确认收到请求)
+
+    Note over C, S: 第二阶段：任务启动与思考 (Reasoning)
+    S->>EQ: EventMsg::TurnStarted (ID: abc-123)
+    EQ-->>C: 前端捕获：UI 进入 Loading/Active 状态
+
+    S->>EQ: EventMsg::AgentReasoningDelta ("分析代码结构...")
+    EQ-->>C: 前端分流：在"思考折叠框"显示实时文字
+
+    Note over C, S: 第三阶段：工具调用与中间人干预 (Tool & HITL)
+    S->>EQ: EventMsg::McpToolCallBegin (tool: "read_file")
+    EQ-->>C: 前端分流：显示"正在读取文件"状态图标
+
+    S->>EQ: EventMsg::ExecApprovalRequest ("cargo add lodash")
+    EQ-->>C: 前端拦截：弹出权限审批对话框 (Diff View)
+    U->>C: 点击"允许"按钮
+    C->>SQ: 发送 Op::ExecApproval (approved: true)
+
+    Note over C, S: 第四阶段：结果生成与收尾 (Generation)
+    S->>EQ: EventMsg::AgentReasoningDelta ("权限已获，开始重构...")
+    S->>EQ: EventMsg::AgentMessageContentDelta ("重构已完成，删除了冗余...")
+    EQ-->>C: 前端分流：在"主回复区"呈现打字机效果
+
+    S->>EQ: EventMsg::TurnComplete (ID: abc-123)
+    EQ-->>C: 前端捕获：结束动画，释放输入框
+    C->>U: 任务完成</pre></div></figure>
+
 <h3 id="第一阶段：提交-Submission"><a href="#第一阶段：提交-Submission" class="headerlink" title="第一阶段：提交 (Submission)"></a>第一阶段：提交 (Submission)</h3><ul>
 <li><code>[Client -&gt; SQ]</code>: 发送 <code>Op::UserTurn</code> (ID: abc-123, “重构 main.rs”)。</li>
 <li><code>[Server]</code>: 接收指令，入队执行引擎，瞬间返回 Ack。</li>
