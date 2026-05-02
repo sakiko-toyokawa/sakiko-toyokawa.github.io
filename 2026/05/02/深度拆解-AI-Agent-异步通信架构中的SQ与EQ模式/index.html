@@ -27,7 +27,7 @@
 <meta property="og:description" content="构建可控、实时的智能体中枢——深入分析 SQ (Submission Queue) 与 EQ (Event Queue) 模式如何解耦 AI Agent 的复杂状态，将长耗时任务转化为可观察、可干预的事件流。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-02T04:00:00.000Z">
-<meta property="article:modified_time" content="2026-05-02T12:56:56.565Z">
+<meta property="article:modified_time" content="2026-05-02T13:09:02.214Z">
 <meta property="article:author" content="sakiko-toyokawa">
 <meta property="article:tag" content="AI">
 <meta property="article:tag" content="Architecture">
@@ -337,7 +337,7 @@
       <span class="post-meta mr-2">
         <i class="iconfont icon-chart"></i>
         
-          4.9k 字
+          7.1k 字
         
       </span>
     
@@ -348,7 +348,7 @@
         
         
         
-          41 分钟
+          60 分钟
         
       </span>
     
@@ -438,9 +438,89 @@
 <li><strong>AgentMessageContentDelta</strong>: 当 Agent 收集完所有信息，开始组织语言回复用户。</li>
 <li><strong>UI 响应</strong>: 典型的”打字机”效果。</li>
 </ul>
+<h3 id="TurnItem：EQ-事件的标准载荷"><a href="#TurnItem：EQ-事件的标准载荷" class="headerlink" title="TurnItem：EQ 事件的标准载荷"></a>TurnItem：EQ 事件的标准载荷</h3><p>如果说 EQ 定义了事件<strong>何时</strong>发出、<strong>按什么顺序</strong>流转，那么 <code>TurnItem</code> 则定义了事件<strong>携带什么内容</strong>、<strong>驱动何种 UI</strong>。它是 EQ 流水线中流动的”货物”——AI 在一个对话轮次中所有”能说的话”和”能做的动作”，全部通过 <code>TurnItem</code> 进行标准化封装。</p>
+<p>我们可以从三个维度来理解它的设计价值：</p>
+<p><strong>1. 行为的”集装箱”：标准化封装</strong></p>
+<p><code>TurnItem</code> 是一个枚举（enum），将 AI 的异构行为统一为一种数据类型。无论 AI 是在思考、上网搜索、生成图片还是回复文本，系统都将这些行为打包为同一个 <code>TurnItem</code> 结构。</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-none"><code class="language-none">TurnItem
+├── AgentMessage    → 文本回复
+├── Reasoning       → 思考过程（内心独白）
+├── WebSearch       → 搜索结果
+├── ImageGeneration → AI 绘图
+├── FileChange      → 文件修改（Diff）
+└── ToolCall        → 工具调用<span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<ul>
+<li><strong>统一接口</strong>：系统不需要为”搜索结果”和”文本回复”编写两套处理逻辑，一条 EQ 通道承载所有 <code>TurnItem</code> 变体。</li>
+<li><strong>高扩展性</strong>：如果以后 AI 学会了”发邮件”或”控制智能家居”，只需在 <code>TurnItem</code> 枚举中增加一个变体（Variant），前后端只需新增对应的渲染组件即可。</li>
+</ul>
+<p><strong>2. 状态的”进度条”：流式生命周期</strong></p>
+<p>EQ 并非一次性推送完整的 <code>TurnItem</code>，而是通过 <code>ItemStarted</code> → <code>ItemUpdate</code>（反复）→ <code>ItemCompleted</code> 三段式信号，配合 <code>TurnItem</code> 实现细腻的渐进式渲染：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>含义</th>
+<th>前端表现</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ItemStarted</code></td>
+<td>声明一个新 <code>TurnItem</code> 已开始</td>
+<td>创建占位节点，显示加载骨架</td>
+</tr>
+<tr>
+<td><code>ItemUpdate</code></td>
+<td>推送增量内容（Delta）</td>
+<td>追加文本、更新进度条</td>
+</tr>
+<tr>
+<td><code>ItemCompleted</code></td>
+<td>标记该 <code>TurnItem</code> 已完结</td>
+<td>移除加载态，展示最终结果</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>透明化过程</strong>：当模型决定搜索时，EQ 立即发出 <code>ItemStarted(TurnItem::WebSearch)</code>——用户能立刻看到”AI 正在搜索”，而不是面对屏幕干等。</li>
+<li><strong>异步编排</strong>：不同的 <code>TurnItem</code> 可以顺序或并行产生。例如，Agent 可以先产出 <code>Reasoning</code>（规划），再执行 <code>WebSearch</code>（搜索），最后给出 <code>AgentMessage</code>（回答），整个过程通过 EQ 事件流串联为一个有机整体。</li>
+</ul>
+<p><strong>3. UI 的”指挥官”：驱动前端渲染</strong></p>
+<p><code>TurnItem</code> 的枚举变体直接决定了前端该渲染哪个组件，实现了声明式 UI 映射：</p>
+<table>
+<thead>
+<tr>
+<th><code>TurnItem</code> 变体</th>
+<th>前端渲染策略</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Reasoning</code></td>
+<td>折叠到可展开的”思考过程”区域，默认收起，不干扰阅读</td>
+</tr>
+<tr>
+<td><code>WebSearch</code></td>
+<td>渲染搜索结果卡片，展示来源链接和摘要</td>
+</tr>
+<tr>
+<td><code>ImageGeneration</code></td>
+<td>弹出图片查看器，支持放大和下载</td>
+</tr>
+<tr>
+<td><code>FileChange</code></td>
+<td>展示代码差异对比（Diff 视图），逐行高亮变更</td>
+</tr>
+<tr>
+<td><code>AgentMessage</code></td>
+<td>在主回复区以打字机效果渲染 Markdown</td>
+</tr>
+</tbody></table>
+<p><strong>总结公式</strong>：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-none"><code class="language-none">TurnItem &#x3D; 行为定义 + 工具载体 + 渲染指令<span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
+
+<p>EQ 是”神经系统”，负责传递信号；<code>TurnItem</code> 是”信号的内容”，告诉前端<strong>发生了什么</strong>以及<strong>该怎么展示</strong>。两者配合，构成了从后端执行到前端渲染的完整闭环。</p>
 <hr>
-<h2 id="3-架构深潜：基于-Rust-的状态建模"><a href="#3-架构深潜：基于-Rust-的状态建模" class="headerlink" title="3. 架构深潜：基于 Rust 的状态建模"></a>3. 架构深潜：基于 Rust 的状态建模</h2><p>在 Codex 的实践中，我们通过强类型语言（如 Rust）对这两者进行严格建模，以确保复杂交互下的协议安全性。</p>
-<h3 id="2-1-SQ-Op-伪代码实现"><a href="#2-1-SQ-Op-伪代码实现" class="headerlink" title="2.1 SQ (Op) 伪代码实现"></a>2.1 SQ (Op) 伪代码实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">Op</span> <span class="token punctuation">&#123;</span>
+<h2 id="3-架构深潜：基于-Rust-的状态建模"><a href="#3-架构深潜：基于-Rust-的状态建模" class="headerlink" title="3. 架构深潜：基于 Rust 的状态建模"></a>3. 架构深潜：基于 Rust 的状态建模</h2><p>在 Codex 的实践中，我们通过强类型语言（如 Rust）对这三者进行严格建模，以确保复杂交互下的协议安全性。</p>
+<h3 id="3-1-SQ-Op-伪代码实现"><a href="#3-1-SQ-Op-伪代码实现" class="headerlink" title="3.1 SQ (Op) 伪代码实现"></a>3.1 SQ (Op) 伪代码实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">Op</span> <span class="token punctuation">&#123;</span>
     <span class="token comment">/// 发起新对话</span>
     <span class="token class-name">UserTurn</span> <span class="token punctuation">&#123;</span>
         id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span>
@@ -457,20 +537,42 @@
     <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
 <span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
-<h3 id="2-2-EQ-EventMsg-伪代码实现"><a href="#2-2-EQ-EventMsg-伪代码实现" class="headerlink" title="2.2 EQ (EventMsg) 伪代码实现"></a>2.2 EQ (EventMsg) 伪代码实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">EventMsg</span> <span class="token punctuation">&#123;</span>
-    <span class="token comment">/// 任务生命周期标记</span>
+<h3 id="3-2-EQ-EventMsg-与-TurnItem-伪代码实现"><a href="#3-2-EQ-EventMsg-与-TurnItem-伪代码实现" class="headerlink" title="3.2 EQ (EventMsg) 与 TurnItem 伪代码实现"></a>3.2 EQ (EventMsg) 与 TurnItem 伪代码实现</h3><p><code>EventMsg</code> 定义了事件的生命周期信号，而 <code>TurnItem</code> 是信号中携带的内容载荷——两者共同构成 EQ 通道的完整协议：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">/// EQ 通道推送的事件信封</span>
+<span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">EventMsg</span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">/// 一个新 TurnItem 已开始</span>
+    <span class="token class-name">ItemStarted</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> item<span class="token punctuation">:</span> <span class="token class-name">TurnItem</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 增量更新（Delta）—— 驱动打字机效果</span>
+    <span class="token class-name">ItemUpdate</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> delta<span class="token punctuation">:</span> <span class="token class-name">TurnItemDelta</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 该 TurnItem 已完成</span>
+    <span class="token class-name">ItemCompleted</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> item<span class="token punctuation">:</span> <span class="token class-name">TurnItem</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 整个轮次启动</span>
     <span class="token class-name">TurnStarted</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
-    <span class="token comment">/// 思考逻辑流（内心独白）</span>
-    <span class="token class-name">AgentThoughtDelta</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
-    <span class="token comment">/// MCP 工具调用实况</span>
-    <span class="token class-name">ToolCallBegin</span> <span class="token punctuation">&#123;</span> tool<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> args<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
-    <span class="token comment">/// 实时终端输出</span>
-    <span class="token class-name">ExecOutputDelta</span> <span class="token punctuation">&#123;</span> chunk<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
-    <span class="token comment">/// 最终回复内容流</span>
-    <span class="token class-name">MessageDelta</span> <span class="token punctuation">&#123;</span> text<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
-    <span class="token comment">/// 任务终结</span>
+    <span class="token comment">/// 整个轮次结束</span>
     <span class="token class-name">TurnComplete</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
-<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+<span class="token punctuation">&#125;</span>
+
+<span class="token comment">/// AI 在一个轮次中的所有"话语"与"动作"</span>
+<span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">TurnItem</span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">/// 纯文本回复</span>
+    <span class="token class-name">AgentMessage</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 思考过程（可折叠）</span>
+    <span class="token class-name">Reasoning</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 网络搜索结果</span>
+    <span class="token class-name">WebSearch</span> <span class="token punctuation">&#123;</span> query<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> results<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">SearchResult</span><span class="token operator">></span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// AI 生成图片</span>
+    <span class="token class-name">ImageGeneration</span> <span class="token punctuation">&#123;</span> prompt<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> image_url<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 文件修改（触发 Diff 视图）</span>
+    <span class="token class-name">FileChange</span> <span class="token punctuation">&#123;</span> path<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> diff<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 通用工具调用</span>
+    <span class="token class-name">ToolCall</span> <span class="token punctuation">&#123;</span> tool<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> args<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token comment">/// 流式增量（打字机原理）</span>
+<span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">TurnItemDelta</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">ContentDelta</span> <span class="token punctuation">&#123;</span> text<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token class-name">Progress</span> <span class="token punctuation">&#123;</span> current<span class="token punctuation">:</span> <span class="token keyword">u32</span><span class="token punctuation">,</span> total<span class="token punctuation">:</span> <span class="token keyword">u32</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
 <hr>
 <h2 id="4-通信时序：一个任务的生命周期"><a href="#4-通信时序：一个任务的生命周期" class="headerlink" title="4. 通信时序：一个任务的生命周期"></a>4. 通信时序：一个任务的生命周期</h2><p>以用户输入”重构 main.rs 文件”为例，系统内部的流转如下：</p>
@@ -487,28 +589,38 @@
     SQ-->>C: 网络层 Ack (确认收到请求)
 
     Note over C, S: 第二阶段：任务启动与思考 (Reasoning)
-    S->>EQ: EventMsg::TurnStarted (ID: abc-123)
-    EQ-->>C: 前端捕获：UI 进入 Loading/Active 状态
+    S->>EQ: TurnStarted (ID: abc-123)
+    EQ-->>C: UI 进入 Loading/Active 状态
 
-    S->>EQ: EventMsg::AgentReasoningDelta ("分析代码结构...")
-    EQ-->>C: 前端分流：在"思考折叠框"显示实时文字
+    S->>EQ: ItemStarted(TurnItem::Reasoning)
+    EQ-->>C: 创建"思考过程"折叠区域
+    S->>EQ: ItemUpdate(ContentDelta "正在分析代码结构...")
+    EQ-->>C: 打字机追加推理内容
+    S->>EQ: ItemCompleted(TurnItem::Reasoning)
+    EQ-->>C: 折叠区域标记完成
 
     Note over C, S: 第三阶段：工具调用与中间人干预 (Tool & HITL)
-    S->>EQ: EventMsg::McpToolCallBegin (tool: "read_file")
-    EQ-->>C: 前端分流：显示"正在读取文件"状态图标
+    S->>EQ: ItemStarted(TurnItem::ToolCall "read_file")
+    EQ-->>C: 显示"正在读取文件"状态图标
 
-    S->>EQ: EventMsg::ExecApprovalRequest ("cargo add lodash")
-    EQ-->>C: 前端拦截：弹出权限审批对话框 (Diff View)
+    S->>EQ: ExecApprovalRequest ("cargo add lodash")
+    EQ-->>C: 弹出权限审批对话框 (Diff View)
     U->>C: 点击"允许"按钮
     C->>SQ: 发送 Op::ExecApproval (approved: true)
 
-    Note over C, S: 第四阶段：结果生成与收尾 (Generation)
-    S->>EQ: EventMsg::AgentReasoningDelta ("权限已获，开始重构...")
-    S->>EQ: EventMsg::AgentMessageContentDelta ("重构已完成，删除了冗余...")
-    EQ-->>C: 前端分流：在"主回复区"呈现打字机效果
+    S->>EQ: ItemCompleted(TurnItem::ToolCall "read_file")
+    EQ-->>C: 标记工具调用完成
 
-    S->>EQ: EventMsg::TurnComplete (ID: abc-123)
-    EQ-->>C: 前端捕获：结束动画，释放输入框
+    Note over C, S: 第四阶段：结果生成与收尾 (Generation)
+    S->>EQ: ItemStarted(TurnItem::AgentMessage)
+    EQ-->>C: 创建主回复区消息气泡
+    S->>EQ: ItemUpdate(ContentDelta "重构已完成，删除了冗余...")
+    EQ-->>C: 打字机效果逐字渲染
+    S->>EQ: ItemCompleted(TurnItem::AgentMessage)
+    EQ-->>C: 移除光标动画，显示完整 Markdown
+
+    S->>EQ: TurnComplete (ID: abc-123)
+    EQ-->>C: 结束动画，释放输入框
     C->>U: 任务完成</pre></div></figure>
 
 <h3 id="第一阶段：提交-Submission"><a href="#第一阶段：提交-Submission" class="headerlink" title="第一阶段：提交 (Submission)"></a>第一阶段：提交 (Submission)</h3><ul>
@@ -516,19 +628,19 @@
 <li><code>[Server]</code>: 接收指令，入队执行引擎，瞬间返回 Ack。</li>
 </ul>
 <h3 id="第二阶段：执行与反馈-Event-Flow"><a href="#第二阶段：执行与反馈-Event-Flow" class="headerlink" title="第二阶段：执行与反馈 (Event Flow)"></a>第二阶段：执行与反馈 (Event Flow)</h3><ul>
-<li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::TurnStarted</code> (ID: abc-123)。前端 UI 渲染 Loading 态。</li>
-<li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::AgentThoughtDelta</code> (“正在分析依赖…”)。</li>
-<li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::ToolCallBegin</code> (tool: read_file)。</li>
+<li><code>[Server -&gt; EQ]</code>: 推送 <code>TurnStarted</code>。前端 UI 渲染 Loading 态。</li>
+<li><code>[Server -&gt; EQ]</code>: 推送 <code>ItemStarted(TurnItem::Reasoning)</code> → <code>ItemUpdate(ContentDelta)</code> 反复推送 → <code>ItemCompleted(TurnItem::Reasoning)</code>。<br>用户看到”思考折叠框”从出现、到逐字填充、到标记完成的全过程。</li>
 </ul>
 <h3 id="第三阶段：人在回路-Interaction"><a href="#第三阶段：人在回路-Interaction" class="headerlink" title="第三阶段：人在回路 (Interaction)"></a>第三阶段：人在回路 (Interaction)</h3><p>Agent 发现需要安装新依赖，涉及 cargo add 权限：</p>
 <ul>
-<li><code>[Server -&gt; EQ]</code>: 发送 <code>EventMsg::ExecApprovalRequest</code>。</li>
-<li><code>[Client -&gt; SQ]</code>: 用户查看 Diff 后发送 <code>Op::ExecApproval</code> (approved: true)。</li>
-<li><code>[Server]</code>: 收到指令，继续执行。</li>
+<li><code>[Server -&gt; EQ]</code>: 推送 <code>ItemStarted(TurnItem::ToolCall(&quot;read_file&quot;))</code>，前端渲染”读取中”图标。</li>
+<li><code>[Server -&gt; EQ]</code>: 推送 <code>ExecApprovalRequest</code>，弹出权限审批对话框。</li>
+<li><code>[Client -&gt; SQ]</code>: 用户查看 Diff 后发送 <code>Op::ExecApproval(approved: true)</code>。</li>
+<li><code>[Server]</code>: 收到指令，继续执行，最终推送 <code>ItemCompleted(TurnItem::ToolCall)</code>。</li>
 </ul>
 <h3 id="第四阶段：收尾-Completion"><a href="#第四阶段：收尾-Completion" class="headerlink" title="第四阶段：收尾 (Completion)"></a>第四阶段：收尾 (Completion)</h3><ul>
-<li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::MessageDelta</code> (“重构已完成…”)。</li>
-<li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::TurnComplete</code> (ID: abc-123)。前端解除输入框锁定。</li>
+<li><code>[Server -&gt; EQ]</code>: 推送 <code>ItemStarted(TurnItem::AgentMessage)</code> → 反复 <code>ItemUpdate(ContentDelta)</code> → <code>ItemCompleted(TurnItem::AgentMessage)</code>。前端以打字机效果渲染最终回复。</li>
+<li><code>[Server -&gt; EQ]</code>: 推送 <code>TurnComplete</code>。前端解除输入框锁定。</li>
 </ul>
 <hr>
 <h2 id="5-架构优势：为什么要这么做？"><a href="#5-架构优势：为什么要这么做？" class="headerlink" title="5. 架构优势：为什么要这么做？"></a>5. 架构优势：为什么要这么做？</h2><h3 id="5-1-彻底解决长连接超时"><a href="#5-1-彻底解决长连接超时" class="headerlink" title="5.1 彻底解决长连接超时"></a>5.1 彻底解决长连接超时</h3><p>如果使用 HTTP 请求，AI 思考 1 分钟会导致网关超时。在 SQ&#x2F;EQ 模式下，连接只是一个”管道”，任务的状态被持久化在后端。即便网络波动，客户端重连后只需重新订阅 EQ，即可瞬间”找回”进度。</p>
