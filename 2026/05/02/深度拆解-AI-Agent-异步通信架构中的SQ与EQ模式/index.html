@@ -27,7 +27,7 @@
 <meta property="og:description" content="构建可控、实时的智能体中枢——深入分析 SQ (Submission Queue) 与 EQ (Event Queue) 模式如何解耦 AI Agent 的复杂状态，将长耗时任务转化为可观察、可干预的事件流。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-02T04:00:00.000Z">
-<meta property="article:modified_time" content="2026-05-02T12:19:45.425Z">
+<meta property="article:modified_time" content="2026-05-02T12:39:48.257Z">
 <meta property="article:author" content="sakiko-toyokawa">
 <meta property="article:tag" content="AI">
 <meta property="article:tag" content="Architecture">
@@ -337,7 +337,7 @@
       <span class="post-meta mr-2">
         <i class="iconfont icon-chart"></i>
         
-          2.6k 字
+          3.3k 字
         
       </span>
     
@@ -348,7 +348,7 @@
         
         
         
-          22 分钟
+          28 分钟
         
       </span>
     
@@ -416,7 +416,30 @@
 <li><strong>关联性</strong>：每个 <code>EventMsg</code> 都会回填 <code>submission_id</code>，让前端知道这个进度属于哪个任务。</li>
 </ul>
 <hr>
-<h2 id="2-架构深潜：基于-Rust-的状态建模"><a href="#2-架构深潜：基于-Rust-的状态建模" class="headerlink" title="2. 架构深潜：基于 Rust 的状态建模"></a>2. 架构深潜：基于 Rust 的状态建模</h2><p>在 Codex 的实践中，我们通过强类型语言（如 Rust）对这两者进行严格建模，以确保复杂交互下的协议安全性。</p>
+<h2 id="2-EQ-工作流：从”起念”到”尘埃落定”"><a href="#2-EQ-工作流：从”起念”到”尘埃落定”" class="headerlink" title="2. EQ 工作流：从”起念”到”尘埃落定”"></a>2. EQ 工作流：从”起念”到”尘埃落定”</h2><p>在 AI Agent 的异步架构中，EQ (Event Queue) 是整个系统的”神经系统”。它不仅负责传递最终结果，更重要的是它记录了 Agent 从接收指令到完成任务的每一个微小动作。</p>
+<p>我们可以将 EQ 的工作流看作一条实时的、带状态的流水线。</p>
+<p>当一个任务进入后端执行引擎后，EQ 会按照以下生命周期阶段推送事件：</p>
+<h3 id="阶段-A：初始化-Initialization"><a href="#阶段-A：初始化-Initialization" class="headerlink" title="阶段 A：初始化 (Initialization)"></a>阶段 A：初始化 (Initialization)</h3><ul>
+<li><strong>TurnStarted</strong>: 标志着后端已正式接管该任务。</li>
+<li><strong>UI 响应</strong>: 客户端通常会在此刻将 UI 状态置为”Active”，并清空上一次的临时缓存。</li>
+</ul>
+<h3 id="阶段-B：推理与规划-Reasoning-Planning"><a href="#阶段-B：推理与规划-Reasoning-Planning" class="headerlink" title="阶段 B：推理与规划 (Reasoning &amp; Planning)"></a>阶段 B：推理与规划 (Reasoning &amp; Planning)</h3><ul>
+<li><strong>AgentReasoningDelta</strong>: 模型开始”碎碎念”。它输出目前的分析：”用户想重构代码，我需要先读取 index.ts…”</li>
+<li><strong>重要性</strong>: 这一步是缓解用户焦虑的关键。即使后台在处理复杂的逻辑，前端也能通过这些事件显示 Agent 的”心跳”。</li>
+</ul>
+<h3 id="阶段-C：工具调用循环-Tool-Execution-Loop"><a href="#阶段-C：工具调用循环-Tool-Execution-Loop" class="headerlink" title="阶段 C：工具调用循环 (Tool Execution Loop)"></a>阶段 C：工具调用循环 (Tool Execution Loop)</h3><p>这是 EQ 最繁忙的阶段，可能包含多次往复：</p>
+<ul>
+<li><strong>McpToolCallBegin</strong>: 告知前端，Agent 决定调用某个工具（如 read_file）。</li>
+<li><strong>ExecOutputDelta</strong>: 如果是执行 Shell 命令，这里会流式推送终端的 stdout 输出。</li>
+<li><strong>ExecApprovalRequest</strong>: 如果触碰高危操作，EQ 会推送一个”挂起”事件，等待 SQ 通道的授权指令。</li>
+<li><strong>McpToolCallEnd</strong>: 工具执行完毕，返回结果。</li>
+</ul>
+<h3 id="阶段-D：结果生成-Generation"><a href="#阶段-D：结果生成-Generation" class="headerlink" title="阶段 D：结果生成 (Generation)"></a>阶段 D：结果生成 (Generation)</h3><ul>
+<li><strong>AgentMessageContentDelta</strong>: 当 Agent 收集完所有信息，开始组织语言回复用户。</li>
+<li><strong>UI 响应</strong>: 典型的”打字机”效果。</li>
+</ul>
+<hr>
+<h2 id="3-架构深潜：基于-Rust-的状态建模"><a href="#3-架构深潜：基于-Rust-的状态建模" class="headerlink" title="3. 架构深潜：基于 Rust 的状态建模"></a>3. 架构深潜：基于 Rust 的状态建模</h2><p>在 Codex 的实践中，我们通过强类型语言（如 Rust）对这两者进行严格建模，以确保复杂交互下的协议安全性。</p>
 <h3 id="2-1-SQ-Op-伪代码实现"><a href="#2-1-SQ-Op-伪代码实现" class="headerlink" title="2.1 SQ (Op) 伪代码实现"></a>2.1 SQ (Op) 伪代码实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">Op</span> <span class="token punctuation">&#123;</span>
     <span class="token comment">/// 发起新对话</span>
     <span class="token class-name">UserTurn</span> <span class="token punctuation">&#123;</span>
@@ -450,7 +473,7 @@
 <span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
 <hr>
-<h2 id="3-通信时序：一个任务的生命周期"><a href="#3-通信时序：一个任务的生命周期" class="headerlink" title="3. 通信时序：一个任务的生命周期"></a>3. 通信时序：一个任务的生命周期</h2><p>以用户输入”重构 main.rs 文件”为例，系统内部的流转如下：</p>
+<h2 id="4-通信时序：一个任务的生命周期"><a href="#4-通信时序：一个任务的生命周期" class="headerlink" title="4. 通信时序：一个任务的生命周期"></a>4. 通信时序：一个任务的生命周期</h2><p>以用户输入”重构 main.rs 文件”为例，系统内部的流转如下：</p>
 <h3 id="第一阶段：提交-Submission"><a href="#第一阶段：提交-Submission" class="headerlink" title="第一阶段：提交 (Submission)"></a>第一阶段：提交 (Submission)</h3><ul>
 <li><code>[Client -&gt; SQ]</code>: 发送 <code>Op::UserTurn</code> (ID: abc-123, “重构 main.rs”)。</li>
 <li><code>[Server]</code>: 接收指令，入队执行引擎，瞬间返回 Ack。</li>
@@ -471,11 +494,11 @@
 <li><code>[Server -&gt; EQ]</code>: 推送 <code>EventMsg::TurnComplete</code> (ID: abc-123)。前端解除输入框锁定。</li>
 </ul>
 <hr>
-<h2 id="4-架构优势：为什么要这么做？"><a href="#4-架构优势：为什么要这么做？" class="headerlink" title="4. 架构优势：为什么要这么做？"></a>4. 架构优势：为什么要这么做？</h2><h3 id="4-1-彻底解决长连接超时"><a href="#4-1-彻底解决长连接超时" class="headerlink" title="4.1 彻底解决长连接超时"></a>4.1 彻底解决长连接超时</h3><p>如果使用 HTTP 请求，AI 思考 1 分钟会导致网关超时。在 SQ&#x2F;EQ 模式下，连接只是一个”管道”，任务的状态被持久化在后端。即便网络波动，客户端重连后只需重新订阅 EQ，即可瞬间”找回”进度。</p>
-<h3 id="4-2-极高的交互灵活性"><a href="#4-2-极高的交互灵活性" class="headerlink" title="4.2 极高的交互灵活性"></a>4.2 极高的交互灵活性</h3><p>通过 <code>Interrupt</code> 操作，用户可以随时叫停 Agent。这在同步模式下很难实现，因为同步请求往往处于阻塞状态，无法接收新的控制指令。</p>
-<h3 id="4-3-真正实现”透明-AI”"><a href="#4-3-真正实现”透明-AI”" class="headerlink" title="4.3 真正实现”透明 AI”"></a>4.3 真正实现”透明 AI”</h3><p>传统的 Agent 像是一个黑盒，你不知道它在干什么。SQ&#x2F;EQ 模式通过细粒度的事件推送，将 AI 的思考逻辑、工具调用、报错信息实时展现在 UI 上，极大缓解了用户的等待焦虑。</p>
+<h2 id="5-架构优势：为什么要这么做？"><a href="#5-架构优势：为什么要这么做？" class="headerlink" title="5. 架构优势：为什么要这么做？"></a>5. 架构优势：为什么要这么做？</h2><h3 id="5-1-彻底解决长连接超时"><a href="#5-1-彻底解决长连接超时" class="headerlink" title="5.1 彻底解决长连接超时"></a>5.1 彻底解决长连接超时</h3><p>如果使用 HTTP 请求，AI 思考 1 分钟会导致网关超时。在 SQ&#x2F;EQ 模式下，连接只是一个”管道”，任务的状态被持久化在后端。即便网络波动，客户端重连后只需重新订阅 EQ，即可瞬间”找回”进度。</p>
+<h3 id="5-2-极高的交互灵活性"><a href="#5-2-极高的交互灵活性" class="headerlink" title="5.2 极高的交互灵活性"></a>5.2 极高的交互灵活性</h3><p>通过 <code>Interrupt</code> 操作，用户可以随时叫停 Agent。这在同步模式下很难实现，因为同步请求往往处于阻塞状态，无法接收新的控制指令。</p>
+<h3 id="5-3-真正实现”透明-AI”"><a href="#5-3-真正实现”透明-AI”" class="headerlink" title="5.3 真正实现”透明 AI”"></a>5.3 真正实现”透明 AI”</h3><p>传统的 Agent 像是一个黑盒，你不知道它在干什么。SQ&#x2F;EQ 模式通过细粒度的事件推送，将 AI 的思考逻辑、工具调用、报错信息实时展现在 UI 上，极大缓解了用户的等待焦虑。</p>
 <hr>
-<h2 id="5-总结"><a href="#5-总结" class="headerlink" title="5. 总结"></a>5. 总结</h2><p>在 AI Agent 的工程化道路上，SQ 与 EQ 模式是通往生产环境的必经之路。它将复杂的长耗时任务转化为可观察、可干预的事件流。</p>
+<h2 id="6-总结"><a href="#6-总结" class="headerlink" title="6. 总结"></a>6. 总结</h2><p>在 AI Agent 的工程化道路上，SQ 与 EQ 模式是通往生产环境的必经之路。它将复杂的长耗时任务转化为可观察、可干预的事件流。</p>
 <ul>
 <li><strong>Op 是用户的意图。</strong></li>
 <li><strong>EventMsg 是 AI 的呼吸。</strong></li>
