@@ -897,6 +897,26 @@
       });
     });
   });
+
+  // 点击放大 mermaid 图表
+  (function() {
+    var style = document.createElement('style');
+    style.textContent = '.mermaid svg { cursor: zoom-in; } .mermaid svg:hover { opacity: 0.85; }';
+    document.head.appendChild(style);
+
+    document.body.addEventListener('click', function(e) {
+      var svg = e.target.closest('.mermaid svg');
+      if (!svg) return;
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+      var clone = svg.cloneNode(true);
+      clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;background:#fff;border-radius:4px;padding:12px';
+      clone.title = '点击关闭';
+      overlay.appendChild(clone);
+      overlay.addEventListener('click', function() { overlay.remove(); });
+      document.body.appendChild(overlay);
+    });
+  })();
 </script>
 
 

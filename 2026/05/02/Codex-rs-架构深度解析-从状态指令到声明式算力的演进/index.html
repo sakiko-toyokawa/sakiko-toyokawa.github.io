@@ -524,15 +524,15 @@
     <div class="post-meta">
       <i class="iconfont icon-tags"></i>
       
-        <a href="/tags/Codex-rs/" class="print-no-link">#Codex-rs</a>
+        <a href="/tags/AI/" class="print-no-link">#AI</a>
+      
+        <a href="/tags/Rust/" class="print-no-link">#Rust</a>
       
         <a href="/tags/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" class="print-no-link">#架构设计</a>
       
-        <a href="/tags/AI/" class="print-no-link">#AI</a>
+        <a href="/tags/Codex-rs/" class="print-no-link">#Codex-rs</a>
       
         <a href="/tags/LLM/" class="print-no-link">#LLM</a>
-      
-        <a href="/tags/Rust/" class="print-no-link">#Rust</a>
       
         <a href="/tags/%E5%88%86%E5%B8%83%E5%BC%8F%E7%B3%BB%E7%BB%9F/" class="print-no-link">#分布式系统</a>
       
@@ -674,6 +674,26 @@
       });
     });
   });
+
+  // 点击放大 mermaid 图表
+  (function() {
+    var style = document.createElement('style');
+    style.textContent = '.mermaid svg { cursor: zoom-in; } .mermaid svg:hover { opacity: 0.85; }';
+    document.head.appendChild(style);
+
+    document.body.addEventListener('click', function(e) {
+      var svg = e.target.closest('.mermaid svg');
+      if (!svg) return;
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+      var clone = svg.cloneNode(true);
+      clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;background:#fff;border-radius:4px;padding:12px';
+      clone.title = '点击关闭';
+      overlay.appendChild(clone);
+      overlay.addEventListener('click', function() { overlay.remove(); });
+      document.body.appendChild(overlay);
+    });
+  })();
 </script>
 
 

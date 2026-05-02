@@ -829,8 +829,6 @@
     <div class="post-meta">
       <i class="iconfont icon-tags"></i>
       
-        <a href="/tags/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" class="print-no-link">#架构设计</a>
-      
         <a href="/tags/Claude-Code/" class="print-no-link">#Claude Code</a>
       
         <a href="/tags/AI-%E5%B7%A5%E5%85%B7/" class="print-no-link">#AI 工具</a>
@@ -840,6 +838,8 @@
         <a href="/tags/TypeScript/" class="print-no-link">#TypeScript</a>
       
         <a href="/tags/%E7%BB%88%E7%AB%AF%E5%BA%94%E7%94%A8/" class="print-no-link">#终端应用</a>
+      
+        <a href="/tags/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" class="print-no-link">#架构设计</a>
       
     </div>
   
@@ -979,6 +979,26 @@
       });
     });
   });
+
+  // 点击放大 mermaid 图表
+  (function() {
+    var style = document.createElement('style');
+    style.textContent = '.mermaid svg { cursor: zoom-in; } .mermaid svg:hover { opacity: 0.85; }';
+    document.head.appendChild(style);
+
+    document.body.addEventListener('click', function(e) {
+      var svg = e.target.closest('.mermaid svg');
+      if (!svg) return;
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+      var clone = svg.cloneNode(true);
+      clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;background:#fff;border-radius:4px;padding:12px';
+      clone.title = '点击关闭';
+      overlay.appendChild(clone);
+      overlay.addEventListener('click', function() { overlay.remove(); });
+      document.body.appendChild(overlay);
+    });
+  })();
 </script>
 
 
