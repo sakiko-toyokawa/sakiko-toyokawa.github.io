@@ -27,7 +27,7 @@
 <meta property="og:description" content="深入剖析 Codex Rust 内核的异步 Actor 封装链——从 Session 状态实体的所有权交接，到 submission_loop 的全链路追踪调度，再到双轨通信与优雅关机，复盘工业级 AI 代理引擎的工程哲学。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-03T06:00:00.000Z">
-<meta property="article:modified_time" content="2026-05-03T16:17:01.916Z">
+<meta property="article:modified_time" content="2026-05-03T16:51:36.139Z">
 <meta property="article:author" content="sakiko-toyokawa">
 <meta property="article:tag" content="AI Agent">
 <meta property="article:tag" content="Actor 模式">
@@ -339,7 +339,7 @@
       <span class="post-meta mr-2">
         <i class="iconfont icon-chart"></i>
         
-          26k 字
+          25k 字
         
       </span>
     
@@ -350,7 +350,7 @@
         
         
         
-          216 分钟
+          209 分钟
         
       </span>
     
@@ -966,18 +966,6 @@
 <li><strong>生产者不阻塞</strong>：<code>tx.send(new_value)</code> 永远不会等待。</li>
 </ul>
 <p>这恰好匹配了”Agent 全局状态”的需求：</p>
-<figure><div class="code-wrapper"><pre class="mermaid">stateDiagram-v2
-    [*] --> Pending: 初始化
-    Pending --> Busy: 收到有效 Op::Message
-    Busy --> Idle: Turn 完成
-    Idle --> Busy: 收到下一个 Op::Message
-    Busy --> Busy: 工具链执行中
-    Busy --> Pending: 收到 Shutdown
-    Busy --> Error: LLM 调用失败
-    Error --> Idle: 错误恢复
-    Error --> Pending: 不可恢复，即将退出
-    Pending --> [*]: 资源清理完成</pre></div></figure>
-
 <p>前端只需要 <code>rx_status.borrow()</code> 就能拿到最新的 <code>AgentStatus</code>：</p>
 <ul>
 <li><code>Pending</code> → 灰色圆点</li>
@@ -998,31 +986,6 @@
 <li>沙箱资源（临时目录、bubblewrap 容器）需要回收吗？</li>
 </ul>
 <h3 id="7-1-双级关机逻辑"><a href="#7-1-双级关机逻辑" class="headerlink" title="7.1 双级关机逻辑"></a>7.1 双级关机逻辑</h3><p>Codex 采用”双级关机”：</p>
-<figure><div class="code-wrapper"><pre class="mermaid">sequenceDiagram
-    participant User as User / Frontend
-    participant Chan as Submission Channel
-    participant Loop as submission_loop
-    participant Turn as Running Turn
-    participant DB as SQLite
-    participant Sandbox as Sandbox
-
-    User->>Chan: send(Op::Shutdown)
-    Chan->>Loop: recv(Op::Shutdown)
-
-    Note over Loop: ★ 第一级：指令级关机
-    Loop->>Loop: accepting_new = false
-    Loop->>Turn: cancel_token.cancel()
-
-    Turn->>Turn: abort LLM stream
-    Turn->>DB: save_partial_progress()
-    Turn-->>Loop: JoinHandle completed
-
-    Note over Loop: ★ 第二级：资源级关机
-    Loop->>Sandbox: cleanup temp dirs
-    Loop->>Sandbox: terminate containers
-    Loop->>DB: flush & close connection
-    Loop->>Chan: signal complete (via semaphore)</pre></div></figure>
-
 <p><strong>第一级——指令级关机</strong>（不阻塞，毫秒级）：</p>
 <ul>
 <li>Loop 标记自己不再接受新 Submission。</li>
