@@ -27,7 +27,7 @@
 <meta property="og:description" content="深入剖析 Codex Rust 内核的异步 Actor 封装链——从 Session 状态实体的所有权交接，到 submission_loop 的全链路追踪调度，再到双轨通信与优雅关机，复盘工业级 AI 代理引擎的工程哲学。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-03T06:00:00.000Z">
-<meta property="article:modified_time" content="2026-05-03T15:40:20.616Z">
+<meta property="article:modified_time" content="2026-05-03T16:17:01.916Z">
 <meta property="article:author" content="sakiko-toyokawa">
 <meta property="article:tag" content="AI Agent">
 <meta property="article:tag" content="Actor 模式">
@@ -339,7 +339,7 @@
       <span class="post-meta mr-2">
         <i class="iconfont icon-chart"></i>
         
-          23k 字
+          26k 字
         
       </span>
     
@@ -350,7 +350,7 @@
         
         
         
-          196 分钟
+          216 分钟
         
       </span>
     
@@ -645,26 +645,34 @@
 <li>初始化 SQLite 连接以持久化 Turn 状态</li>
 </ul>
 <p>所有这些操作全部是 <strong>async</strong> 的——在等待磁盘 I&#x2F;O 或网络响应时，Tokio 运行时可以继续处理其他 Session 的消息。这叫<strong>冷启动零阻塞</strong>。</p>
-<h3 id="3-2-所有权的交接：The-“Move”-Magic"><a href="#3-2-所有权的交接：The-“Move”-Magic" class="headerlink" title="3.2 所有权的交接：The “Move” Magic"></a>3.2 所有权的交接：The “Move” Magic</h3><p>这是 Rust 中最具美感的一行代码：</p>
-<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> <span class="token punctuation">(</span>tx_sub<span class="token punctuation">,</span> rx_sub<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">bounded</span><span class="token punctuation">::</span><span class="token operator">&lt;</span><span class="token class-name">Submission</span><span class="token operator">></span><span class="token punctuation">(</span><span class="token constant">CAPACITY</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
-<span class="token keyword">let</span> <span class="token punctuation">(</span>tx_evt<span class="token punctuation">,</span> rx_evt<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">unbounded</span><span class="token punctuation">::</span><span class="token operator">&lt;</span><span class="token class-name">Event</span><span class="token operator">></span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<h3 id="3-2-所有权的交接：The-“Move”-Magic"><a href="#3-2-所有权的交接：The-“Move”-Magic" class="headerlink" title="3.2 所有权的交接：The “Move” Magic"></a>3.2 所有权的交接：The “Move” Magic</h3><p>这是 Rust 中最具美感的一行代码——在 <code>session/mod.rs</code> 中，它长这样：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L472–473：建立双轨通道</span>
+<span class="token keyword">let</span> <span class="token punctuation">(</span>tx_sub<span class="token punctuation">,</span> rx_sub<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">bounded</span><span class="token punctuation">(</span><span class="token constant">SUBMISSION_CHANNEL_CAPACITY</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> <span class="token punctuation">(</span>tx_event<span class="token punctuation">,</span> rx_event<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">unbounded</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
 
-<span class="token namespace">tokio<span class="token punctuation">::</span></span><span class="token function">spawn</span><span class="token punctuation">(</span><span class="token keyword">async</span> <span class="token keyword">move</span> <span class="token punctuation">&#123;</span>
-    <span class="token comment">// Session 的生命周期从此与这个 Loop 绑定</span>
-    <span class="token comment">// 没有任何其他代码能拿到 &amp;Session 的引用</span>
-    <span class="token function">submission_loop</span><span class="token punctuation">(</span>session<span class="token punctuation">,</span> config<span class="token punctuation">,</span> rx_sub<span class="token punctuation">,</span> tx_evt<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token comment">// …中间穿插了 skills 加载、插件初始化、exec_policy 构建…</span>
+
+<span class="token comment">// session/mod.rs L655–660：所有权交接——session 物理移入后台任务</span>
+<span class="token keyword">let</span> session_for_loop <span class="token operator">=</span> <span class="token class-name">Arc</span><span class="token punctuation">::</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>session<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> session_loop_handle <span class="token operator">=</span> <span class="token namespace">tokio<span class="token punctuation">::</span></span><span class="token function">spawn</span><span class="token punctuation">(</span><span class="token keyword">async</span> <span class="token keyword">move</span> <span class="token punctuation">&#123;</span>
+    <span class="token function">submission_loop</span><span class="token punctuation">(</span>session_for_loop<span class="token punctuation">,</span> config<span class="token punctuation">,</span> rx_sub<span class="token punctuation">)</span>
+        <span class="token punctuation">.</span><span class="token function">instrument</span><span class="token punctuation">(</span><span class="token macro property">info_span!</span><span class="token punctuation">(</span><span class="token string">"session_loop"</span><span class="token punctuation">,</span> thread_id <span class="token operator">=</span> <span class="token operator">%</span>thread_id<span class="token punctuation">)</span><span class="token punctuation">)</span>
+        <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
 <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
 
-<span class="token comment">// 外部保留的只是 Channel 的发送端</span>
-<span class="token class-name">Codex</span> <span class="token punctuation">&#123;</span>
-    submission_tx<span class="token punctuation">:</span> tx_sub<span class="token punctuation">,</span>
-    event_rx<span class="token punctuation">:</span> rx_evt<span class="token punctuation">,</span>
-<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+<span class="token comment">// session/mod.rs L661–667：外部只持有 Channel 端点和 termination 句柄</span>
+<span class="token keyword">let</span> codex <span class="token operator">=</span> <span class="token class-name">Codex</span> <span class="token punctuation">&#123;</span>
+    tx_sub<span class="token punctuation">,</span>
+    rx_event<span class="token punctuation">,</span>
+    agent_status<span class="token punctuation">:</span> agent_status_rx<span class="token punctuation">,</span>
+    session<span class="token punctuation">,</span>
+    session_loop_termination<span class="token punctuation">:</span> <span class="token function">session_loop_termination_from_handle</span><span class="token punctuation">(</span>session_loop_handle<span class="token punctuation">)</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
 <p>理解这 6 行代码的威力需要深入三个 Rust 概念：</p>
 <p><strong><code>move</code> 闭包的激进语义</strong>：<code>async move { ... }</code> 将 <code>session</code> <strong>物理移入</strong>了闭包。之后，外部代码无法再通过 <code>session.xxx()</code> 访问任何字段。这是<strong>编译器级别的强制执行</strong>，不是靠代码规范或 code review 维持的约定。Rust 的 borrow checker 保证：如果你试图在 <code>move</code> 之后访问 <code>session</code>，编译器会直接报错。</p>
 <p><strong><code>tokio::spawn</code> 的 <code>&#39;static + Send</code> 约束</strong>：<code>spawn</code> 要求闭包及其捕获的所有数据必须满足 <code>&#39;static + Send</code>。这意味着 Session 不能持有对栈上数据的引用（生命周期不够长），也不能持有可能跨线程传递的非 Send 类型（如 <code>Rc&lt;T&gt;</code>）。这看似是限制，实则是一种保障：Session 不会被意外挂在某个栈帧上，也不会因为使用了非线程安全的引用计数而出现 use-after-free。</p>
-<p><strong>Channel 作为能力边界</strong>：返回的 <code>Codex</code> 结构体实质上是一个<strong>能力代理（Capability Proxy）</strong>。它持有的 <code>tx_sub</code> 是 “发送指令” 的能力，<code>rx_evt</code> 是”接收事件”的能力——唯独没有”读取 Session 内部状态”的能力。这实现了极简的 API 设计：调用者不需要知道后台是多线程、分布式还是单线程，它只需要 <code>submit(op)</code>。</p>
+<p><strong>Channel 作为能力边界</strong>：返回的 <code>Codex</code> 结构体实质上是一个<strong>能力代理（Capability Proxy）</strong>。它持有的 <code>tx_sub</code> 是”发送指令”的能力，<code>rx_event</code> 是”接收事件”的能力，<code>agent_status: watch::Receiver&lt;AgentStatus&gt;</code> 是”查看最新状态”的能力——唯独没有”读取 Session 内部状态”的能力。这实现了极简的 API 设计：调用者不需要知道后台是多线程、分布式还是单线程，它只需要 <code>submit(op)</code>。</p>
 <h3 id="3-3-async-channel-的选择：轮询-vs-通知"><a href="#3-3-async-channel-的选择：轮询-vs-通知" class="headerlink" title="3.3 async_channel 的选择：轮询 vs 通知"></a>3.3 <code>async_channel</code> 的选择：轮询 vs 通知</h3><p>Codex 选择了 <code>async_channel</code> crate 而非 Tokio 自带的 <code>mpsc</code>。两者的关键差异在于<strong>通知机制</strong>：</p>
 <ul>
 <li><strong>Tokio <code>mpsc</code></strong>：基于协作调度（cooperative scheduling）。接收方在 <code>.recv()</code> 时注册 waker，发送方在 <code>send</code> 后通知 waker。在高吞吐场景下效率极高，但如果发送方位于不同的运行时（如 IPC 跨进程），就会有问题。</li>
@@ -692,48 +700,34 @@
 <p>问题在于 <code>Mutex</code> 的语义是<strong>互斥</strong>（mutual exclusion），而我们需要的是<strong>隔离所有权</strong>（isolated ownership）。<code>Mutex</code> 意味着”大家共享，轮流使用”；Actor 意味着”我不共享，你发消息”。对于 AI 会话这种”内部状态持续变化、外部只需要收到变化通知”的场景，消息传递语义天然匹配。</p>
 <hr>
 <h2 id="第四部分：执行中枢——submission-loop-的深度解析"><a href="#第四部分：执行中枢——submission-loop-的深度解析" class="headerlink" title="第四部分：执行中枢——submission_loop 的深度解析"></a>第四部分：执行中枢——submission_loop 的深度解析</h2><p><code>submission_loop</code> 是 Codex 的灵魂。它不仅是一个 <code>while let Ok(sub) = rx.recv().await</code> 循环，更是一个精密的多优先级任务调度器。</p>
-<h3 id="4-1-Loop-的核心结构"><a href="#4-1-Loop-的核心结构" class="headerlink" title="4.1 Loop 的核心结构"></a>4.1 Loop 的核心结构</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">submission_loop</span><span class="token punctuation">(</span>
-    <span class="token keyword">mut</span> session<span class="token punctuation">:</span> <span class="token class-name">Session</span><span class="token punctuation">,</span>
-    config<span class="token punctuation">:</span> <span class="token class-name">Config</span><span class="token punctuation">,</span>
-    rx<span class="token punctuation">:</span> <span class="token class-name">Receiver</span><span class="token operator">&lt;</span><span class="token class-name">Submission</span><span class="token operator">></span><span class="token punctuation">,</span>
-    tx_evt<span class="token punctuation">:</span> <span class="token class-name">Sender</span><span class="token operator">&lt;</span><span class="token class-name">Event</span><span class="token operator">></span><span class="token punctuation">,</span>
-<span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Result</span><span class="token operator">&lt;</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token class-name">SessionError</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
-    <span class="token keyword">let</span> cancel_token <span class="token operator">=</span> <span class="token class-name">CancellationToken</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
-    <span class="token keyword">let</span> <span class="token keyword">mut</span> running_turn<span class="token punctuation">:</span> <span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">JoinHandle</span><span class="token operator">&lt;</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">>></span> <span class="token operator">=</span> <span class="token class-name">None</span><span class="token punctuation">;</span>
-
-    <span class="token keyword">loop</span> <span class="token punctuation">&#123;</span>
-        <span class="token namespace">tokio<span class="token punctuation">::</span></span><span class="token macro property">select!</span> <span class="token punctuation">&#123;</span>
-            <span class="token comment">// 路径 1: 收到新指令</span>
-            submission <span class="token operator">=</span> rx<span class="token punctuation">.</span><span class="token function">recv</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
-                <span class="token keyword">let</span> sub <span class="token operator">=</span> <span class="token keyword">match</span> submission <span class="token punctuation">&#123;</span>
-                    <span class="token class-name">Ok</span><span class="token punctuation">(</span>s<span class="token punctuation">)</span> <span class="token operator">=></span> s<span class="token punctuation">,</span>
-                    <span class="token class-name">Err</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token keyword">break</span><span class="token punctuation">,</span> <span class="token comment">// Channel 关闭，优雅退出</span>
-                <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
-                <span class="token function">dispatch_submission</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">mut</span> session<span class="token punctuation">,</span> sub<span class="token punctuation">,</span> <span class="token operator">&amp;</span><span class="token keyword">mut</span> running_turn<span class="token punctuation">,</span> <span class="token operator">&amp;</span>cancel_token<span class="token punctuation">,</span> <span class="token operator">&amp;</span>tx_evt<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<h3 id="4-1-Loop-的核心结构"><a href="#4-1-Loop-的核心结构" class="headerlink" title="4.1 Loop 的核心结构"></a>4.1 Loop 的核心结构</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// handlers.rs L965–975：真实的 submission_loop 签名和入口</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">super</span><span class="token punctuation">)</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">submission_loop</span><span class="token punctuation">(</span>
+    sess<span class="token punctuation">:</span> <span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">Session</span><span class="token operator">></span><span class="token punctuation">,</span>
+    config<span class="token punctuation">:</span> <span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">Config</span><span class="token operator">></span><span class="token punctuation">,</span>
+    rx_sub<span class="token punctuation">:</span> <span class="token class-name">Receiver</span><span class="token operator">&lt;</span><span class="token class-name">Submission</span><span class="token operator">></span><span class="token punctuation">,</span>
+<span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">// 退出循环的唯一方式：收到 Op::Shutdown</span>
+    <span class="token keyword">while</span> <span class="token keyword">let</span> <span class="token class-name">Ok</span><span class="token punctuation">(</span>sub<span class="token punctuation">)</span> <span class="token operator">=</span> rx_sub<span class="token punctuation">.</span><span class="token function">recv</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+        <span class="token macro property">debug!</span><span class="token punctuation">(</span><span class="token operator">?</span>sub<span class="token punctuation">,</span> <span class="token string">"Submission"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> dispatch_span <span class="token operator">=</span> <span class="token function">submission_dispatch_span</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sub<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> should_exit <span class="token operator">=</span> <span class="token keyword">async</span> <span class="token punctuation">&#123;</span>
+            <span class="token keyword">match</span> sub<span class="token punctuation">.</span>op<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+                <span class="token comment">// … 几十个 Op 变体的分支匹配 …</span>
+                <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Shutdown</span> <span class="token operator">=></span> <span class="token function">shutdown</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">,</span>
+                _ <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 处理完毕后 return false */</span> <span class="token boolean">false</span> <span class="token punctuation">&#125;</span>
             <span class="token punctuation">&#125;</span>
-            <span class="token comment">// 路径 2: 当前 Turn 完成</span>
-            result <span class="token operator">=</span> <span class="token keyword">async</span> <span class="token punctuation">&#123;</span>
-                <span class="token keyword">if</span> <span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>handle<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token operator">&amp;</span><span class="token keyword">mut</span> running_turn <span class="token punctuation">&#123;</span>
-                    handle<span class="token punctuation">.</span><span class="token keyword">await</span>
-                <span class="token punctuation">&#125;</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
-                    <span class="token namespace">std<span class="token punctuation">::</span>future<span class="token punctuation">::</span></span><span class="token function">pending</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span>
-                <span class="token punctuation">&#125;</span>
-            <span class="token punctuation">&#125;</span><span class="token punctuation">,</span> <span class="token keyword">if</span> running_turn<span class="token punctuation">.</span><span class="token function">is_some</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
-                <span class="token comment">// Turn 完成，发送完成事件</span>
-                tx_evt<span class="token punctuation">.</span><span class="token function">send</span><span class="token punctuation">(</span><span class="token class-name">Event</span><span class="token punctuation">::</span><span class="token class-name">TurnCompleted</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token function">ok</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
-                running_turn <span class="token operator">=</span> <span class="token class-name">None</span><span class="token punctuation">;</span>
-            <span class="token punctuation">&#125;</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> _entered <span class="token operator">=</span> dispatch_span<span class="token punctuation">.</span><span class="token function">entered</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token keyword">if</span> should_exit<span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+            <span class="token keyword">break</span><span class="token punctuation">;</span>
         <span class="token punctuation">&#125;</span>
     <span class="token punctuation">&#125;</span>
-    <span class="token comment">// 指令级关机：不再接受新任务</span>
-    <span class="token function">graceful_shutdown</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">mut</span> session<span class="token punctuation">,</span> <span class="token operator">&amp;</span>tx_evt<span class="token punctuation">,</span> running_turn<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
-    <span class="token class-name">Ok</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
-<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
-<p>这里的核心设计决策是：<strong>Loop 本身是串行的，但单个 Turn 的执行可以被 spawn 为独立 task</strong>。这保证了两件事：</p>
+<p>这里的核心设计决策是：<strong>Loop 本身是串行 while-let 接收，每条 Submission 在匹配到具体 Op 分支后，由 handler 函数决定是同步处理还是 spawn 子任务</strong>。这保证了两件事：</p>
 <ol>
-<li><strong>指令顺序（Ordering Guarantee）</strong>：发送 <code>cd /src</code> 接着发送 <code>ls</code> 的 Submission 会被严格按 FIFO 顺序处理。</li>
-<li><strong>可中断性（Interruptibility）</strong>：即使某个 Turn 正在执行耗时 60 秒的工具链，Loop 依然可以通过 <code>select!</code> 的另一个分支接收新的 <code>Submission::Interrupt</code>。</li>
+<li><strong>指令顺序（Ordering Guarantee）</strong>：发送 <code>cd /src</code> 接着发送 <code>ls</code> 的 Submission 会被严格按 FIFO 顺序处理——前者完全完成后才会处理后者。</li>
+<li><strong>可中断性（Interruptibility）</strong>：<code>Op::Interrupt</code> 分支调用 <code>interrupt(&amp;sess).await</code> 直接给当前 Turn 发取消信号，不需要等到循环体中某个耗时的 spawn 完成。每个 Submission 处理完毕后 <code>should_exit</code> 判断都可以立即让 Loop 退出。</li>
 </ol>
 <h3 id="4-2-全链路追踪的接力-Tracing-Relay"><a href="#4-2-全链路追踪的接力-Tracing-Relay" class="headerlink" title="4.2 全链路追踪的接力 (Tracing Relay)"></a>4.2 全链路追踪的接力 (Tracing Relay)</h3><p>在异步系统中，最棘手的问题之一是<strong>追踪信息跨线程传播</strong>。假设：</p>
 <ul>
@@ -764,83 +758,110 @@
 │ └─ apply_patch
 └──────────────────────┘<span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
-<p>实现这一机制的关键代码路径：</p>
-<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// Step 1: 发送端 - 抓取当前 span context</span>
-<span class="token keyword">let</span> span <span class="token operator">=</span> <span class="token class-name">Span</span><span class="token punctuation">::</span><span class="token function">current</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
-<span class="token keyword">let</span> trace_context <span class="token operator">=</span> span<span class="token punctuation">.</span><span class="token function">context</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>  <span class="token comment">// W3C TraceContext</span>
+<p>实现这一机制的真实代码路径横跨三个 crate：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// ═══ Step 1：发送端 ═══</span>
+<span class="token comment">// otel/src/trace_context.rs L19–34</span>
+<span class="token comment">// 从当前 tracing span 中提取 W3C TraceContext</span>
+<span class="token keyword">pub</span> <span class="token keyword">fn</span> <span class="token function-definition function">current_span_w3c_trace_context</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">W3cTraceContext</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
+    <span class="token function">span_w3c_trace_context</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token class-name">Span</span><span class="token punctuation">::</span><span class="token function">current</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+    <span class="token comment">// → 通过 TraceContextPropagator::inject_context 提取 traceparent/tracestate</span>
+<span class="token punctuation">&#125;</span>
 
-<span class="token comment">// Step 2: 将 trace_context 序列化后塞入 Submission 的元数据</span>
-<span class="token keyword">let</span> sub <span class="token operator">=</span> <span class="token class-name">Submission</span> <span class="token punctuation">&#123;</span>
-    id<span class="token punctuation">:</span> <span class="token class-name">SubmissionId</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
-    op<span class="token punctuation">:</span> <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Message</span><span class="token punctuation">(</span>text<span class="token punctuation">)</span><span class="token punctuation">,</span>
-    trace_parent<span class="token punctuation">:</span> trace_context<span class="token punctuation">.</span><span class="token function">to_w3c_string</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>  <span class="token comment">// "00-abc123-def456-01"</span>
-<span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+<span class="token comment">// ═══ Step 2：入队时自动注入 trace ═══</span>
+<span class="token comment">// session/mod.rs L694–703</span>
+<span class="token keyword">pub</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">submit_with_id</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">,</span> <span class="token keyword">mut</span> sub<span class="token punctuation">:</span> <span class="token class-name">Submission</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">CodexResult</span><span class="token operator">&lt;</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">if</span> sub<span class="token punctuation">.</span>trace<span class="token punctuation">.</span><span class="token function">is_none</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+        sub<span class="token punctuation">.</span>trace <span class="token operator">=</span> <span class="token function">current_span_w3c_trace_context</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token comment">// ← 关键：如果调用方没传 trace，自动从当前 span 抓取并注入</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token keyword">self</span><span class="token punctuation">.</span>tx_sub
+        <span class="token punctuation">.</span><span class="token function">send</span><span class="token punctuation">(</span>sub<span class="token punctuation">)</span>
+        <span class="token punctuation">.</span><span class="token keyword">await</span>
+        <span class="token punctuation">.</span><span class="token function">map_err</span><span class="token punctuation">(</span><span class="token closure-params"><span class="token closure-punctuation punctuation">|</span>_<span class="token closure-punctuation punctuation">|</span></span> <span class="token class-name">CodexErr</span><span class="token punctuation">::</span><span class="token class-name">InternalAgentDied</span><span class="token punctuation">)</span><span class="token operator">?</span><span class="token punctuation">;</span>
+    <span class="token class-name">Ok</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+<span class="token punctuation">&#125;</span>
 
-<span class="token comment">// Step 3: 接收端 - 复活 parent context</span>
-<span class="token keyword">let</span> parent_context <span class="token operator">=</span> <span class="token class-name">Context</span><span class="token punctuation">::</span><span class="token function">from_w3c_string</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sub<span class="token punctuation">.</span>trace_parent<span class="token punctuation">)</span><span class="token punctuation">;</span>
-<span class="token keyword">let</span> <span class="token keyword">mut</span> span <span class="token operator">=</span> <span class="token macro property">info_span!</span><span class="token punctuation">(</span><span class="token string">"submission_dispatch"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
-span<span class="token punctuation">.</span><span class="token function">set_parent</span><span class="token punctuation">(</span>parent_context<span class="token punctuation">)</span><span class="token punctuation">;</span>  <span class="token comment">// ← 关键：建立父子关系</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+<span class="token comment">// ═══ Step 3：派发时复活父 context ═══</span>
+<span class="token comment">// handlers.rs L1224–1252</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">super</span><span class="token punctuation">)</span> <span class="token keyword">fn</span> <span class="token function-definition function">submission_dispatch_span</span><span class="token punctuation">(</span>sub<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">Submission</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token namespace">tracing<span class="token punctuation">::</span></span><span class="token class-name">Span</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">let</span> op_name <span class="token operator">=</span> sub<span class="token punctuation">.</span>op<span class="token punctuation">.</span><span class="token function">kind</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">let</span> span_name <span class="token operator">=</span> <span class="token macro property">format!</span><span class="token punctuation">(</span><span class="token string">"op.dispatch.&#123;op_name&#125;"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token keyword">let</span> dispatch_span <span class="token operator">=</span> <span class="token macro property">info_span!</span><span class="token punctuation">(</span>
+        <span class="token string">"submission_dispatch"</span><span class="token punctuation">,</span>
+        otel<span class="token punctuation">.</span>name <span class="token operator">=</span> span_name<span class="token punctuation">.</span><span class="token function">as_str</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        submission<span class="token punctuation">.</span>id <span class="token operator">=</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">as_str</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        codex<span class="token punctuation">.</span>op <span class="token operator">=</span> op_name
+    <span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token comment">// ← 核心：如果 Submission 携带了 trace，设置为当前 span 的 parent</span>
+    <span class="token keyword">if</span> <span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>trace<span class="token punctuation">)</span> <span class="token operator">=</span> sub<span class="token punctuation">.</span>trace<span class="token punctuation">.</span><span class="token function">as_ref</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+        <span class="token operator">&amp;&amp;</span> <span class="token operator">!</span><span class="token function">set_parent_from_w3c_trace_context</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>dispatch_span<span class="token punctuation">,</span> trace<span class="token punctuation">)</span>
+    <span class="token punctuation">&#123;</span>
+        <span class="token macro property">warn!</span><span class="token punctuation">(</span>
+            submission<span class="token punctuation">.</span>id <span class="token operator">=</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">as_str</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+            <span class="token string">"ignoring invalid submission trace carrier"</span>
+        <span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+    dispatch_span
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
-<p><strong>种子阶段</strong>：用户提交时抓取当前线程的 Trace ID 和 Span ID。</p>
-<p><strong>休眠阶段</strong>：Trace 信息作为 <code>Submission</code> 的一份元数据在 Channel 的内存管道中排队。因为 W3C 字符串只有约 55 字节，这个开销几乎为零。</p>
-<p><strong>复活阶段</strong>：Loop 收到 <code>Submission</code> 后，通过 <code>set_parent_from_w3c_trace_context</code>（或 <code>set_parent</code>）强行将后台 Span 的父节点指向原始请求。</p>
+<p><strong>种子阶段</strong>：<code>submit_with_id</code> 调用 <code>current_span_w3c_trace_context()</code> 抓取当前线程的 W3C TraceContext，注入到 <code>Submission.trace</code> 字段。</p>
+<p><strong>休眠阶段</strong>：Trace 信息作为 <code>Submission</code> 的一份元数据在 Channel 的内存管道中排队。W3C TraceContext 通常只有约 55 字节（<code>traceparent</code> header），几乎零开销。</p>
+<p><strong>复活阶段</strong>：Loop 收到 <code>Submission</code> 后，<code>submission_dispatch_span</code> 调用 <code>set_parent_from_w3c_trace_context</code>，将后台 Span 的父节点强行链接到原始请求的 Trace ID。如果 trace carrier 无效，仅打一个 warn 而不中断执行——观测不阻塞业务。</p>
 <p>最终效果：在 Grafana &#x2F; Jaeger 上可以看到一份完美的时间瀑布图，精准定位”模型加载慢”和”网络传输慢”各自消了多少时间。</p>
-<h3 id="4-3-任务分发与并发策略"><a href="#4-3-任务分发与并发策略" class="headerlink" title="4.3 任务分发与并发策略"></a>4.3 任务分发与并发策略</h3><p>虽然 Loop 是串行的以保证逻辑顺序，但具体任务（<code>Op::Message</code>）的处理会根据类型决定是否进一步 spawn 子 task：</p>
-<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">fn</span> <span class="token function-definition function">dispatch_submission</span><span class="token punctuation">(</span>sub<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">Submission</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">DispatchAction</span> <span class="token punctuation">&#123;</span>
-    <span class="token keyword">match</span> <span class="token operator">&amp;</span>sub<span class="token punctuation">.</span>op <span class="token punctuation">&#123;</span>
-        <span class="token comment">// 最高优先级：直接给正在运行的生成器发信号</span>
-        <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Interrupt</span> <span class="token operator">=></span> <span class="token class-name">DispatchAction</span><span class="token punctuation">::</span><span class="token class-name">Priority</span><span class="token punctuation">(</span>
-            <span class="token class-name">Priority</span><span class="token punctuation">::</span><span class="token class-name">High</span><span class="token punctuation">,</span>
-            <span class="token class-name">Action</span><span class="token punctuation">::</span><span class="token class-name">SignalRunningTurn</span><span class="token punctuation">,</span>
-        <span class="token punctuation">)</span><span class="token punctuation">,</span>
-        <span class="token comment">// 最高优先级：优雅关机指令</span>
-        <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Shutdown</span> <span class="token operator">=></span> <span class="token class-name">DispatchAction</span><span class="token punctuation">::</span><span class="token class-name">Priority</span><span class="token punctuation">(</span>
-            <span class="token class-name">Priority</span><span class="token punctuation">::</span><span class="token class-name">High</span><span class="token punctuation">,</span>
-            <span class="token class-name">Action</span><span class="token punctuation">::</span><span class="token class-name">InitiateShutdown</span><span class="token punctuation">,</span>
-        <span class="token punctuation">)</span><span class="token punctuation">,</span>
-        <span class="token comment">// 普通优先级：FIFO，保证代码生成的时序逻辑</span>
-        <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Message</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">|</span> <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">FileChange</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">|</span> <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">UserApproval</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
-            <span class="token class-name">DispatchAction</span><span class="token punctuation">::</span><span class="token class-name">Normal</span><span class="token punctuation">(</span><span class="token class-name">Action</span><span class="token punctuation">::</span><span class="token class-name">EnqueueAndProcess</span><span class="token punctuation">)</span>
-        <span class="token punctuation">&#125;</span>
-        <span class="token comment">// 低优先级：后台操作，不影响主循环</span>
-        <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">QueryStatus</span> <span class="token operator">|</span> <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">QueryHistory</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
-            <span class="token class-name">DispatchAction</span><span class="token punctuation">::</span><span class="token class-name">Normal</span><span class="token punctuation">(</span><span class="token class-name">Action</span><span class="token punctuation">::</span><span class="token class-name">ImmediateResponse</span><span class="token punctuation">)</span>
-        <span class="token punctuation">&#125;</span>
+<h3 id="4-3-任务分发与并发策略"><a href="#4-3-任务分发与并发策略" class="headerlink" title="4.3 任务分发与并发策略"></a>4.3 任务分发与并发策略</h3><p>虽然 Loop 是串行的以保证逻辑顺序，但每个 Op 变体的处理函数内部可能进一步 spawn 子 task。以下是真实 match 分支的摘录（选自 handlers.rs L975–1148）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// handlers.rs L975：submission_loop 内的大 match，每种 Op 一个分支</span>
+<span class="token keyword">match</span> sub<span class="token punctuation">.</span>op<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">// 中断信号——最高优先级，直接调用 interrupt() 发取消信号</span>
+    <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Interrupt</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+        <span class="token function">interrupt</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token boolean">false</span>  <span class="token comment">// 不退出循环</span>
     <span class="token punctuation">&#125;</span>
-<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
-
-<p><strong>中断指令（Interrupt）的处理</strong>不经过常规队列——它通过一个独立的 <code>CancellationToken</code> 信号直接通知正在执行的 Turn task 停下当前的 LLM stream 并释放资源。这避免了”用户在 UI 点了停止但还要等 30 秒代码生成完”的体验灾难。</p>
-<h3 id="4-4-中断的底层实现"><a href="#4-4-中断的底层实现" class="headerlink" title="4.4 中断的底层实现"></a>4.4 中断的底层实现</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// 简化概念模型</span>
-<span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">run_turn</span><span class="token punctuation">(</span>session<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token keyword">mut</span> <span class="token class-name">Session</span><span class="token punctuation">,</span> cancel<span class="token punctuation">:</span> <span class="token class-name">CancellationToken</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
-    <span class="token keyword">loop</span> <span class="token punctuation">&#123;</span>
-        <span class="token namespace">tokio<span class="token punctuation">::</span></span><span class="token macro property">select!</span> <span class="token punctuation">&#123;</span>
-            <span class="token comment">// LLM 返回了下一段 token</span>
-            token <span class="token operator">=</span> model<span class="token punctuation">.</span>stream<span class="token punctuation">.</span><span class="token function">next</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
-                <span class="token keyword">match</span> token <span class="token punctuation">&#123;</span>
-                    <span class="token class-name">Some</span><span class="token punctuation">(</span>t<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token function">emit_event</span><span class="token punctuation">(</span>t<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">,</span>
-                    <span class="token class-name">None</span> <span class="token operator">=></span> <span class="token keyword">break</span><span class="token punctuation">,</span> <span class="token comment">// 流结束</span>
-                <span class="token punctuation">&#125;</span>
-            <span class="token punctuation">&#125;</span>
-            <span class="token comment">// 用户按下了 Stop</span>
-            _ <span class="token operator">=</span> cancel<span class="token punctuation">.</span><span class="token function">cancelled</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
-                <span class="token function">emit_event</span><span class="token punctuation">(</span><span class="token class-name">Event</span><span class="token punctuation">::</span><span class="token class-name">TurnInterrupted</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
-                <span class="token comment">// 这里可以做状态回滚或保存部分结果</span>
-                session<span class="token punctuation">.</span><span class="token function">save_partial_progress</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
-                <span class="token keyword">break</span><span class="token punctuation">;</span>
-            <span class="token punctuation">&#125;</span>
-        <span class="token punctuation">&#125;</span>
+    <span class="token comment">// 用户输入（文本/图片/文件引用等），触发真正的 Turn 执行</span>
+    <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">UserInput</span> <span class="token punctuation">&#123;</span> <span class="token punctuation">..</span> <span class="token punctuation">&#125;</span>
+    <span class="token operator">|</span> <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">UserInputWithTurnContext</span> <span class="token punctuation">&#123;</span> <span class="token punctuation">..</span> <span class="token punctuation">&#125;</span>
+    <span class="token operator">|</span> <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">UserTurn</span> <span class="token punctuation">&#123;</span> <span class="token punctuation">..</span> <span class="token punctuation">&#125;</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+        <span class="token function">user_input_or_turn</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> sub<span class="token punctuation">.</span>op<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token boolean">false</span>
     <span class="token punctuation">&#125;</span>
-<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+    <span class="token comment">// 多 Agent 间通信（子 Agent 向父 Agent 汇报）</span>
+    <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">InterAgentCommunication</span> <span class="token punctuation">&#123;</span> communication <span class="token punctuation">&#125;</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+        <span class="token function">inter_agent_communication</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> communication<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token boolean">false</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token comment">// 审批响应（用户对危险命令点了 Allow/Deny）</span>
+    <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">ExecApproval</span> <span class="token punctuation">&#123;</span> id<span class="token punctuation">:</span> approval_id<span class="token punctuation">,</span> turn_id<span class="token punctuation">,</span> decision <span class="token punctuation">&#125;</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+        <span class="token function">exec_approval</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> approval_id<span class="token punctuation">,</span> turn_id<span class="token punctuation">,</span> decision<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token boolean">false</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token comment">// 上下文压缩——由 token 管理器自动触发</span>
+    <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Compact</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+        <span class="token function">compact</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token boolean">false</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token comment">// ← 唯一返回 true 的分支：让 while-let 循环退出</span>
+    <span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Shutdown</span> <span class="token operator">=></span> <span class="token function">shutdown</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> sub<span class="token punctuation">.</span>id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">,</span>
+    <span class="token comment">// …另有约 20+ 个变体：Realtime Voice、MCP、审批、Guardian 等</span>
+    _ <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 各自处理，返回 false */</span> <span class="token boolean">false</span> <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
-<p><code>CancellationToken</code> 优于 <code>AtomicBool</code> 的地方在于它的 <strong>tree cancellation</strong> 能力。一个父 token 被 cancel 时，所有衍生自它的子 token 也会被自动 cancel。这意味着当 <code>submission_loop</code> 的主 token 触发 cancel，所有在飞的 tool execution、LLM stream、子 Agent 任务——可以全部被”一键取消”。</p>
+<p><strong>关键设计细节</strong>：</p>
+<ul>
+<li>除了 <code>Op::Shutdown</code>，<strong>所有分支都返回 <code>false</code></strong>，意味着 Loop 继续运行。Shutdown 是唯一能终结循环的指令。</li>
+<li><code>Op::Interrupt</code> 的处理极其轻量——只调用 <code>interrupt(&amp;sess)</code> 设置取消标记，不涉及任何 I&#x2F;O。</li>
+<li><code>Op::UserInput</code> 及其变体走 <code>user_input_or_turn</code> 函数，它内部会 spawn 一个 tokio task 来执行完整的 Turn 生命周期（LLM 调用 → 工具执行 → 结果写回）。Loop 不等待 Turn 完成就继续接收下一条 Submission。</li>
+</ul>
+<p><strong>中断指令（Interrupt）的实现</strong>：<code>interrupt(&amp;sess)</code> 向 Session 内部注册的 <code>CancellationToken</code> 发送取消信号。正在执行的 Turn——无论是 LLM stream 接收中途还是工具链执行中——都会在最近的 <code>.await</code> 点检测到 cancel 并终止。这避免了”用户在 UI 点了停止但还要等 30 秒代码生成完”的体验灾难。</p>
+<p>CancellationToken 优于 <code>AtomicBool</code> 的地方在于它的 <strong>tree cancellation</strong> 能力。一个父 token 被 cancel 时，所有衍生自它的 <code>child_token()</code> 也会被自动 cancel。这意味着当 Session 的主 token 触发 cancel，所有在飞的 tool execution、LLM stream、子 Agent 任务——可以全部被”一键取消”。</p>
 <hr>
 <h2 id="第五部分：通信协议——输入轨与输出轨的协奏"><a href="#第五部分：通信协议——输入轨与输出轨的协奏" class="headerlink" title="第五部分：通信协议——输入轨与输出轨的协奏"></a>第五部分：通信协议——输入轨与输出轨的协奏</h2><p>Codex 将通信拆分为两个物理独立的 Channel，各自使用不同的有界&#x2F;无界策略。这不是随意选择的。</p>
-<h3 id="5-1-为什么输入轨用-Bounded-Channel？"><a href="#5-1-为什么输入轨用-Bounded-Channel？" class="headerlink" title="5.1 为什么输入轨用 Bounded Channel？"></a>5.1 为什么输入轨用 Bounded Channel？</h3><p><strong>Bounded Channel &#x3D; <code>async_channel::bounded(CAPACITY)</code></strong></p>
-<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> <span class="token punctuation">(</span>tx_sub<span class="token punctuation">,</span> rx_sub<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">bounded</span><span class="token punctuation">::</span><span class="token operator">&lt;</span><span class="token class-name">Submission</span><span class="token operator">></span><span class="token punctuation">(</span><span class="token number">128</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
+<h3 id="5-1-为什么输入轨用-Bounded-Channel？"><a href="#5-1-为什么输入轨用-Bounded-Channel？" class="headerlink" title="5.1 为什么输入轨用 Bounded Channel？"></a>5.1 为什么输入轨用 Bounded Channel？</h3><p><strong>Bounded Channel &#x3D; <code>async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY)</code></strong></p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L417 + L472</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">const</span> <span class="token constant">SUBMISSION_CHANNEL_CAPACITY</span><span class="token punctuation">:</span> <span class="token keyword">usize</span> <span class="token operator">=</span> <span class="token number">512</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> <span class="token punctuation">(</span>tx_sub<span class="token punctuation">,</span> rx_sub<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">bounded</span><span class="token punctuation">(</span><span class="token constant">SUBMISSION_CHANNEL_CAPACITY</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span></span></code></pre></div></figure>
 
 <p>选择 bounded 的核心原因是<strong>背压机制（Backpressure）</strong>。</p>
 <p>当 AI 在处理一个特别复杂的 turn（例如需要调用 20 个工具、每个工具耗时 5-10 秒），Submission Channel 的消费速度可以降到 0。如果此时前端持续发送新消息（用户疯狂点击），unbounded channel 会把所有消息堆积在内存中，直到 OOM。</p>
-<p>Bounded channel 的行为是：当队列满（128 个 pending Submission），<code>tx_sub.send().await</code> 会<strong>异步阻塞</strong>。这迫使压力反向传导：</p>
+<p>Bounded channel 的行为是：当队列满（512 个 pending Submission），<code>tx_sub.send().await</code> 会<strong>异步阻塞</strong>。这迫使压力反向传导：</p>
 <figure><div class="code-wrapper"><pre class="line-numbers language-none"><code class="language-none">用户连续发送消息
     ↓
 前端 Submit API 返回 Pending（而非 Accepted）
@@ -850,9 +871,9 @@ span<span class="token punctuation">.</span><span class="token function">set_par
 用户停止发送，等待 AI 消化当前积压<span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
 <p>这是一个<strong>压力感知</strong>系统，而不是一个<strong>压力隐藏</strong>系统。压力感知系统能自我保护，压力隐藏系统在爆发时崩溃。</p>
-<p><strong>CAPACITY 的调参</strong>：128 这个数字是经验值。太小（如 8）→ 正常使用时也会频繁触发阻塞。太大（如 4096）→ 背压的”预警”效果消失。Codex 推荐在 64-256 之间根据实际负载调整。</p>
-<h3 id="5-2-为什么输出轨用-Unbounded-Channel？"><a href="#5-2-为什么输出轨用-Unbounded-Channel？" class="headerlink" title="5.2 为什么输出轨用 Unbounded Channel？"></a>5.2 为什么输出轨用 Unbounded Channel？</h3><p><strong>Unbounded Channel &#x3D; <code>async_channel::unbounded::&lt;Event&gt;()</code></strong></p>
-<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> <span class="token punctuation">(</span>tx_evt<span class="token punctuation">,</span> rx_evt<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">unbounded</span><span class="token punctuation">::</span><span class="token operator">&lt;</span><span class="token class-name">Event</span><span class="token operator">></span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
+<p>Codex 选择的 512 是一个经过验证的常量。太小（如 8）→ 正常使用时也会频繁触发阻塞。太大（如 4096）→ 背压的”预警”效果消失。这个值被定义为 <code>SUBMISSION_CHANNEL_CAPACITY</code> 常量，而非魔法数字，体现了 Codex 团队对工程可读性的重视。</p>
+<h3 id="5-2-为什么输出轨用-Unbounded-Channel？"><a href="#5-2-为什么输出轨用-Unbounded-Channel？" class="headerlink" title="5.2 为什么输出轨用 Unbounded Channel？"></a>5.2 为什么输出轨用 Unbounded Channel？</h3><p><strong>Unbounded Channel &#x3D; <code>async_channel::unbounded()</code></strong>（见 session&#x2F;mod.rs L473）</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> <span class="token punctuation">(</span>tx_event<span class="token punctuation">,</span> rx_event<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token function">unbounded</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
 
 <p>选择 unbounded 的逻辑恰与输入轨相反：<strong>Event 的生产者绝不能阻塞</strong>。</p>
 <p>原因很简单：如果因为前端消费太慢（例如网络抖动导致 WebSocket 暂缓 flush）而阻塞了 <code>tx_evt.send()</code>，那么整个 submission_loop 都会卡住——AI 的思考过程被”前端没吃完上一口”而中断。这在用户体验上会表现为”AI 突然沉默了”，而实际上它只是在等前端。</p>
@@ -1017,24 +1038,23 @@ span<span class="token punctuation">.</span><span class="token function">set_par
 </ul>
 <p>这个设计背后的核心原则是：<strong>宁可关闭慢几秒，也绝不能损坏用户数据</strong>。第一级关机保证新请求不再进入，第二级关机保证已有数据完整落地。</p>
 <h3 id="7-2-Drop-安全的工程考量"><a href="#7-2-Drop-安全的工程考量" class="headerlink" title="7.2 Drop 安全的工程考量"></a>7.2 Drop 安全的工程考量</h3><p>Rust 的 <code>Drop</code> trait 不能在 async 上下文中使用（<code>Drop</code> 是同步的，不能 <code>.await</code>）。这意味着所有需要异步完成的清理工作不能在 <code>Drop</code> 里做。</p>
-<p>Codex 的做法是将清理逻辑显式建模为一个函数：</p>
-<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">impl</span> <span class="token class-name">Session</span> <span class="token punctuation">&#123;</span>
-    <span class="token comment">/// 必须显式调用——不能依赖 Drop</span>
-    <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">shutdown</span><span class="token punctuation">(</span><span class="token keyword">mut</span> <span class="token keyword">self</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Result</span><span class="token operator">&lt;</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token class-name">SessionError</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
-        <span class="token comment">// 1. 通知所有子 Agent 停止</span>
-        <span class="token keyword">self</span><span class="token punctuation">.</span>agent_registry<span class="token punctuation">.</span><span class="token function">shutdown_all</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token operator">?</span><span class="token punctuation">;</span>
-
-        <span class="token comment">// 2. 将未持久化的 Turn 落地</span>
-        <span class="token keyword">self</span><span class="token punctuation">.</span>state<span class="token punctuation">.</span><span class="token function">flush</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token operator">?</span><span class="token punctuation">;</span>
-
-        <span class="token comment">// 3. 清理沙箱</span>
-        <span class="token keyword">self</span><span class="token punctuation">.</span>sandbox<span class="token punctuation">.</span><span class="token function">cleanup</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token operator">?</span><span class="token punctuation">;</span>
-
-        <span class="token class-name">Ok</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+<p>Codex 的做法是将清理逻辑显式建模为公开方法：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L716–724：真实的关闭——先发 Shutdown 指令，再等 loop 结束</span>
+<span class="token keyword">pub</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">shutdown_and_wait</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">CodexResult</span><span class="token operator">&lt;</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">let</span> session_loop_termination <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span>session_loop_termination<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token comment">// Step 1：发送 Op::Shutdown → submission_loop 收到后退出 while-let</span>
+    <span class="token keyword">match</span> <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">submit</span><span class="token punctuation">(</span><span class="token class-name">Op</span><span class="token punctuation">::</span><span class="token class-name">Shutdown</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+        <span class="token class-name">Ok</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span><span class="token punctuation">&#125;</span>
+        <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">CodexErr</span><span class="token punctuation">::</span><span class="token class-name">InternalAgentDied</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span><span class="token punctuation">&#125;</span> <span class="token comment">// loop 已经死了，无需再关</span>
+        <span class="token class-name">Err</span><span class="token punctuation">(</span>err<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span>err<span class="token punctuation">)</span><span class="token punctuation">,</span>
     <span class="token punctuation">&#125;</span>
-<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+    <span class="token comment">// Step 2：等待 submission_loop 的 JoinHandle 真正完成</span>
+    session_loop_termination<span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+    <span class="token class-name">Ok</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
 
-<p>这与 <code>CancellationToken</code> 的 <code>drop</code> 行为配合：如果 <code>Session</code> 在未调用 <code>shutdown()</code> 的情况下被 drop（例如 panic），<code>CancellationToken</code> 的 Drop 实现会触发 cancel，通知下游任务停止。这是一个<strong>防御性 fallback</strong>，不是正常流程。</p>
+<p>注意 <code>InternalAgentDied</code> ——如果 <code>tx_sub</code> channel 已经关闭（意味着 loop 已经崩溃退出），<code>send</code> 会返回这个错误。此时 shutdown 视为”已完成”，不需要再 panic。这是防御性编程在异步系统中的一个实践。</p>
+<p><code>session_loop_termination</code> 的类型封装了 <code>tokio::task::JoinHandle</code> 的等待逻辑，允许多个调用方同时等待同一个 loop 结束而不产生竞态。</p>
 <hr>
 <h2 id="第八部分：实战——用-Tokio-复刻一个最小-SQ-EQ-引擎"><a href="#第八部分：实战——用-Tokio-复刻一个最小-SQ-EQ-引擎" class="headerlink" title="第八部分：实战——用 Tokio 复刻一个最小 SQ&#x2F;EQ 引擎"></a>第八部分：实战——用 Tokio 复刻一个最小 SQ&#x2F;EQ 引擎</h2><p>理论说再多不如一行代码。下面用约 120 行 Rust 构建一个最小但结构完整的异步 Agent 引擎。</p>
 <figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">use</span> <span class="token namespace">async_channel<span class="token punctuation">::</span></span><span class="token punctuation">&#123;</span>bounded<span class="token punctuation">,</span> unbounded<span class="token punctuation">,</span> <span class="token class-name">Receiver</span><span class="token punctuation">,</span> <span class="token class-name">Sender</span><span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
@@ -1231,12 +1251,12 @@ span<span class="token punctuation">.</span><span class="token function">set_par
 
 <p><strong>这段骨架的工程要点</strong>：</p>
 <ol>
-<li><strong>三通道架构</strong>：Submission（bounded, 指令进入）、Event（unbounded, 事件流出）、Watch（状态快照）。</li>
-<li><strong>CancellationToken 级联</strong>：<code>cancel.child_token()</code> 实现子任务取消的树形管理。</li>
-<li><strong><code>select! biased</code></strong>：<code>biased</code> 模式确保已完成任务的清理优先于新指令的处理——避免”指令收到但还没处理上一个 Turn 的资源”。</li>
-<li><strong>单向数据流</strong>：外部通过 <code>submit()</code> 注入意图，通过 <code>evt_rx</code> 消费结果——永远没有 <code>engine.session.xxx()</code> 这种直接访问。</li>
+<li><strong>三通道架构</strong>：Submission（bounded, 指令进入）、Event（unbounded, 事件流出）、Watch（状态快照）——与真实的 Codex struct（session&#x2F;mod.rs L367-376）一致，后者持有 <code>tx_sub: Sender&lt;Submission&gt;</code>、<code>rx_event: Receiver&lt;Event&gt;</code>、<code>agent_status: watch::Receiver&lt;AgentStatus&gt;</code>。</li>
+<li><strong>CancellationToken 级联</strong>：<code>cancel.child_token()</code> 实现子任务取消的树形管理。真实 Codex 中这一机制隐藏在 <code>interrupt(&amp;sess)</code> 函数内部，对 submission_loop 是透明的。</li>
+<li><strong>简化 vs 真实</strong>：骨架使用 <code>tokio::select!</code> 同时管理 Turn 完成和指令到达，而真实 <code>submission_loop</code>（handlers.rs L965）是简单的 <code>while let Ok(sub) = rx_sub.recv().await</code> + 同步匹配——Turn 由 <code>user_input_or_turn()</code> 内部 spawn，Loop 不等待其完成。这使得真实版本更简单、更不容易出错。</li>
+<li><strong>单向数据流</strong>：外部通过 <code>submit()</code> 注入意图，通过 <code>evt_rx</code> 消费结果——永远没有 <code>engine.session.xxx()</code> 这种直接访问。这与真实 <code>CodexThread</code>（codex_thread.rs L103-134）的设计完全一致：<code>CodexThread</code> 持有的 <code>codex: Codex</code> 字段是内部实现细节，外部通过 <code>submit(op)</code> &#x2F; <code>submit_with_trace(op, trace)</code> 交互。</li>
 </ol>
-<p>这个约 120 行的骨架已经包含了 Codex 架构设计中最核心的工程模式。在实际 Codex 源码中，<code>submission_loop</code> 的完整实现大约是 2000+ 行 Rust，处理了多 Agent 编配、上下文压缩、插件通知、沙箱生命周期等工业级细节——但骨架逻辑与这里展示的一致。</p>
+<p>这个约 120 行的骨架已经包含了 Codex 架构设计中最核心的工程模式。在实际 Codex 源码中，<code>submission_loop</code> 的完整实现处理了约 30 种 Op 变体（多 Agent 编配、上下文压缩、MCP 工具刷新、Guardian 安全审批、实时语音等），代码量约 200 行——但核心调度模式与这里展示的一致。</p>
 <hr>
 <h2 id="第九部分：可观测性——给大海捞针递一个显微镜"><a href="#第九部分：可观测性——给大海捞针递一个显微镜" class="headerlink" title="第九部分：可观测性——给大海捞针递一个显微镜"></a>第九部分：可观测性——给大海捞针递一个显微镜</h2><h3 id="9-1-为什么追踪不只是”打印日志”"><a href="#9-1-为什么追踪不只是”打印日志”" class="headerlink" title="9.1 为什么追踪不只是”打印日志”"></a>9.1 为什么追踪不只是”打印日志”</h3><p>在单线程程序里，<code>println!(&quot;step 1&quot;)</code> 也许够用。但在一个多线程、多 Agent、多 Channel 的异步系统里，打印日志的线性时间轴会产生严重误导：</p>
 <ul>
