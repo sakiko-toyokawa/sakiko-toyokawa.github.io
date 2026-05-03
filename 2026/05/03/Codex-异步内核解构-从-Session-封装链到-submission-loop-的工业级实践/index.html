@@ -27,7 +27,7 @@
 <meta property="og:description" content="深入剖析 Codex Rust 内核的异步 Actor 封装链——从 Session 状态实体的所有权交接，到 submission_loop 的全链路追踪调度，再到双轨通信与优雅关机，复盘工业级 AI 代理引擎的工程哲学。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-03T06:00:00.000Z">
-<meta property="article:modified_time" content="2026-05-03T16:51:36.139Z">
+<meta property="article:modified_time" content="2026-05-03T17:32:04.025Z">
 <meta property="article:author" content="sakiko-toyokawa">
 <meta property="article:tag" content="AI Agent">
 <meta property="article:tag" content="Actor 模式">
@@ -339,7 +339,7 @@
       <span class="post-meta mr-2">
         <i class="iconfont icon-chart"></i>
         
-          25k 字
+          27k 字
         
       </span>
     
@@ -350,7 +350,7 @@
         
         
         
-          209 分钟
+          224 分钟
         
       </span>
     
@@ -699,7 +699,60 @@
 
 <p>问题在于 <code>Mutex</code> 的语义是<strong>互斥</strong>（mutual exclusion），而我们需要的是<strong>隔离所有权</strong>（isolated ownership）。<code>Mutex</code> 意味着”大家共享，轮流使用”；Actor 意味着”我不共享，你发消息”。对于 AI 会话这种”内部状态持续变化、外部只需要收到变化通知”的场景，消息传递语义天然匹配。</p>
 <hr>
-<h2 id="第四部分：执行中枢——submission-loop-的深度解析"><a href="#第四部分：执行中枢——submission-loop-的深度解析" class="headerlink" title="第四部分：执行中枢——submission_loop 的深度解析"></a>第四部分：执行中枢——submission_loop 的深度解析</h2><p><code>submission_loop</code> 是 Codex 的灵魂。它不仅是一个 <code>while let Ok(sub) = rx.recv().await</code> 循环，更是一个精密的多优先级任务调度器。</p>
+<h2 id="第四部分：执行中枢——submission-loop-的深度解析"><a href="#第四部分：执行中枢——submission-loop-的深度解析" class="headerlink" title="第四部分：执行中枢——submission_loop 的深度解析"></a>第四部分：执行中枢——submission_loop 的深度解析</h2><p><code>submission_loop</code> 是 Codex 的灵魂。它不是一个独立的”调度中间件”，而是一个嵌入在后台 tokio task 中的 <code>while let</code> 循环——从 SQ 管道另一端取出 <code>Submission</code>，当场 match 并同步调用对应的 handler 函数。</p>
+<h3 id="4-0-全链路数据流：从-Op-到-Turn-的端到端时序"><a href="#4-0-全链路数据流：从-Op-到-Turn-的端到端时序" class="headerlink" title="4.0 全链路数据流：从 Op 到 Turn 的端到端时序"></a>4.0 全链路数据流：从 Op 到 Turn 的端到端时序</h3><p>先建立一个全局认知：外部 Op 经历了什么才最终变成一个异步 Turn。以下是端到端的 mermaid 时序图：</p>
+<figure><div class="code-wrapper"><pre class="mermaid">sequenceDiagram
+    participant Caller as 外部调用方<br/>(CodexThread / app-server)
+    participant Codex as Codex<br/>(session/mod.rs)
+    participant SQ as SQ 管道<br/>async_channel::bounded(512)
+    participant Loop as submission_loop<br/>(handlers.rs L965)
+    participant Handler as handlers::xxx()<br/>同步函数调用
+    participant Turn as Turn 子任务<br/>(tokio::spawn)
+    participant EQ as EQ 管道<br/>async_channel::unbounded()
+
+    Note over Codex,SQ: 步骤①：入队——将 Op 打包为 Submission 推入管道
+
+    Caller->>Codex: submit(Op::Message("重构 main.rs"))
+    Codex->>Codex: submit_with_id()<br/>Uuid::now_v7() 分配 id<br/>current_span_w3c_trace_context() 注入 trace
+    Codex->>SQ: tx_sub.send(sub).await
+    Note over Codex: 如果管道满 (512 pending)，此处异步阻塞——背压
+
+    Note over SQ,Loop: 步骤②：出队+分发——Loop 是唯一消费者
+
+    SQ-->>Loop: rx_sub.recv().await → Ok(sub)
+    Loop->>Loop: submission_dispatch_span(&sub)<br/>复活 W3C trace parent
+    Loop->>Handler: user_input_or_turn(&sess, id, op)<br/>← 直接函数调用，无二次管道！
+    Handler->>Turn: tokio::spawn(执行完整 Turn)
+    Handler-->>Loop: return false → 继续循环
+    Loop->>SQ: rx_sub.recv().await (等待下一条)
+
+    Note over Turn: 步骤③：Turn 自主运行——Loop 不等它
+
+    activate Turn
+    Turn->>Turn: LLM stream 循环<br/>+ 工具链执行<br/>(search_file → read_file → apply_patch)
+    Turn-->>EQ: sess.send_event(TextDelta / ToolCall / ...)
+    deactivate Turn
+
+    Note over Caller: 步骤④：中途打断——Loop 还在监听
+
+    Caller->>Codex: submit(Op::Interrupt)
+    Codex->>SQ: tx_sub.send(sub)
+    SQ-->>Loop: rx_sub.recv() → Interrupt
+    Loop->>Handler: interrupt(&sess) ← 同步调用
+    Handler->>Turn: cancel_token.cancel()
+    Turn->>Turn: 最近的 .await 点检测到 cancel，终止
+    Handler-->>Loop: return false
+
+    Note over Caller: 步骤⑤：优雅退出——唯一的 true
+
+    Caller->>Codex: submit(Op::Shutdown)
+    Codex->>SQ: tx_sub.send(sub)
+    SQ-->>Loop: rx_sub.recv() → Shutdown
+    Loop->>Handler: shutdown(&sess, id) ← 同步调用
+    Handler-->>Loop: return true ← 唯一返回 true 的分支
+    Loop->>Loop: break; 退出 while-let 循环</pre></div></figure>
+
+<p>核心认知用一句话总结：<strong><code>Codex.tx_sub.send()</code> 将 Op 推入 SQ 管道，<code>submission_loop</code> 从 SQ 取出后同步调用 handlers，handlers 内部按需 spawn Turn 子任务——整个链路只有一层管道。</strong> 没有传说中的”调度队列”或”二级排队”，就是一个 while-let + match。</p>
 <h3 id="4-1-Loop-的核心结构"><a href="#4-1-Loop-的核心结构" class="headerlink" title="4.1 Loop 的核心结构"></a>4.1 Loop 的核心结构</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// handlers.rs L965–975：真实的 submission_loop 签名和入口</span>
 <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">super</span><span class="token punctuation">)</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">submission_loop</span><span class="token punctuation">(</span>
     sess<span class="token punctuation">:</span> <span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">Session</span><span class="token operator">></span><span class="token punctuation">,</span>
