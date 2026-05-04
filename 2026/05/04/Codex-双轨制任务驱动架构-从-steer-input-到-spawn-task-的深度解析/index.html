@@ -1,0 +1,1479 @@
+
+
+<!DOCTYPE html>
+<html lang="zh-CN" data-default-color-scheme=auto>
+
+
+
+<head>
+  <meta charset="UTF-8">
+
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/fluid.png">
+  <link rel="icon" href="/img/fluid.png">
+  
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#1a1a1a">
+  <meta name="author" content="sakiko-toyokawa">
+  <meta name="keywords" content="">
+  
+    <meta name="description" content="深入 Codex 源码，拆解 user_input_or_turn_inner 的双轨调度机制——&quot;热注入&quot;（steer_input）与&quot;冷启动&quot;（spawn_task）的决策逻辑、邮箱系统、任务类型守卫，及其背后的错误即逻辑工程哲学。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析">
+<meta property="og:url" content="http://example.com/2026/05/04/Codex-%E5%8F%8C%E8%BD%A8%E5%88%B6%E4%BB%BB%E5%8A%A1%E9%A9%B1%E5%8A%A8%E6%9E%B6%E6%9E%84-%E4%BB%8E-steer-input-%E5%88%B0-spawn-task-%E7%9A%84%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90/index.html">
+<meta property="og:site_name" content="瑞希哥的博客">
+<meta property="og:description" content="深入 Codex 源码，拆解 user_input_or_turn_inner 的双轨调度机制——&quot;热注入&quot;（steer_input）与&quot;冷启动&quot;（spawn_task）的决策逻辑、邮箱系统、任务类型守卫，及其背后的错误即逻辑工程哲学。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2026-05-04T04:00:00.000Z">
+<meta property="article:modified_time" content="2026-05-04T12:32:00.971Z">
+<meta property="article:author" content="sakiko-toyokawa">
+<meta property="article:tag" content="AI Agent">
+<meta property="article:tag" content="Actor 模式">
+<meta property="article:tag" content="Codex">
+<meta property="article:tag" content="Rust">
+<meta property="article:tag" content="Tokio">
+<meta property="article:tag" content="异步调度">
+<meta name="twitter:card" content="summary_large_image">
+  
+  
+  
+    <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css" rel="stylesheet">
+  
+  <title>Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析 - 瑞希哥的博客</title>
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/twitter-bootstrap/4.6.1/css/bootstrap.min.css" />
+
+
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/github-markdown-css/4.0.0/github-markdown.min.css" />
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/hint.css/2.7.0/hint.min.css" />
+
+  <link  rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css" />
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/fancybox/3.5.7/jquery.fancybox.min.css" />
+
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+<!-- Do not modify the link that theme dependent icons -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/c/font_1749284_5i9bdhy70f8.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/c/font_1736178_k526ubmyhba.css">
+
+
+<link  rel="stylesheet" href="/css/main.css" />
+
+
+  <link id="highlight-css" rel="stylesheet" href="/css/highlight.css" />
+  
+    <link id="highlight-css-dark" rel="stylesheet" href="/css/highlight-dark.css" />
+  
+
+
+
+  
+<link rel="stylesheet" href="/css/editorial.css">
+
+
+
+  <script id="fluid-configs">
+    var Fluid = window.Fluid || {};
+    Fluid.ctx = Object.assign({}, Fluid.ctx)
+    var CONFIG = {"hostname":"example.com","root":"/","version":"1.9.9","typing":{"enable":true,"typeSpeed":70,"cursorChar":"_","loop":false,"scope":[]},"anchorjs":{"enable":true,"element":"h1,h2,h3,h4,h5,h6","placement":"left","visible":"hover","icon":""},"progressbar":{"enable":true,"height_px":3,"color":"#29d","options":{"showSpinner":false,"trickleSpeed":100}},"code_language":{"enable":true,"default":"TEXT"},"copy_btn":true,"image_caption":{"enable":true},"image_zoom":{"enable":true,"img_url_replace":["",""]},"toc":{"enable":true,"expand_all":true,"placement":"right","headingSelector":"h1,h2,h3,h4,h5,h6","collapseDepth":0},"lazyload":{"enable":true,"loading_img":"/img/loading.gif","onlypost":false,"offset_factor":2},"web_analytics":{"enable":false,"follow_dnt":true,"baidu":null,"google":{"measurement_id":null},"tencent":{"sid":null,"cid":null},"leancloud":{"app_id":null,"app_key":null,"server_url":null,"path":"window.location.pathname","ignore_local":false},"openkounter":{"server_url":"https://open-kounter.mintimate.cn","path":"window.location.pathname","ignore_local":false},"umami":{"src":null,"website_id":null,"domains":null,"start_time":"2024-01-01T00:00:00.000Z","token":null,"api_server":null}},"search_path":"/local-search.xml","include_content_in_search":true};
+
+    if (CONFIG.web_analytics.follow_dnt) {
+      var dntVal = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
+      Fluid.ctx.dnt = dntVal && (dntVal.startsWith('1') || dntVal.startsWith('yes') || dntVal.startsWith('on'));
+    }
+  </script>
+  <script  src="/js/utils.js" ></script>
+  <script  src="/js/color-schema.js" ></script>
+  
+
+
+  
+<meta name="generator" content="Hexo 8.1.1"></head>
+
+
+<body>
+  
+
+  <header>
+    
+
+<div class="header-inner" style="height: 70vh;">
+  <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">
+      <strong>瑞希哥的博客</strong>
+    </a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse"
+            data-target="#navbarSupportedContent"
+            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content (desktop) -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/" target="_self">
+                <i class="iconfont icon-home-fill"></i>
+                <span>首页</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/" target="_self">
+                <i class="iconfont icon-archive-fill"></i>
+                <span>归档</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/" target="_self">
+                <i class="iconfont icon-category-fill"></i>
+                <span>分类</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/" target="_self">
+                <i class="iconfont icon-tags-fill"></i>
+                <span>标签</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/" target="_self">
+                <i class="iconfont icon-user-fill"></i>
+                <span>关于</span>
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" target="_self" href="javascript:;" data-toggle="modal" data-target="#modalSearch" aria-label="Search">
+              <i class="iconfont icon-search"></i>
+            </a>
+          </li>
+          
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" target="_self" href="javascript:;" aria-label="Color Toggle">
+              <i class="iconfont icon-dark" id="color-toggle-icon"></i>
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<!-- Mobile grid menu overlay -->
+<div id="mobile-grid-menu" class="d-lg-none">
+  <div class="mobile-grid-menu-inner">
+    <div class="container">
+      <div class="row">
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-home-fill"></i>
+                  <span>首页</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/archives/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-archive-fill"></i>
+                  <span>归档</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/categories/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-category-fill"></i>
+                  <span>分类</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/tags/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-tags-fill"></i>
+                  <span>标签</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/about/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-user-fill"></i>
+                  <span>关于</span>
+                </div>
+              </a>
+            </div>
+          
+        
+        
+          <div class="col-4 mobile-grid-cell" id="mobile-search-btn">
+            <a href="javascript:;" data-toggle="modal" data-target="#modalSearch" aria-label="Search">
+              <div class="mobile-grid-item">
+                <i class="iconfont icon-search"></i>
+                <span>搜索</span>
+              </div>
+            </a>
+          </div>
+        
+        
+          <div class="col-4 mobile-grid-cell" id="mobile-color-toggle-btn"
+               data-label-light="开灯"
+               data-label-dark="关灯">
+            <a href="javascript:;" aria-label="Color Toggle">
+              <div class="mobile-grid-item">
+                <i class="iconfont icon-dark" id="mobile-color-toggle-icon"></i>
+                <span id="mobile-color-toggle-label">关灯</span>
+              </div>
+            </a>
+          </div>
+        
+      </div>
+    </div>
+  </div>
+</div>
+
+  
+
+<div id="banner" class="banner" parallax=true
+     style="background: url('/img/default.png') no-repeat center center; background-size: cover;">
+  <div class="full-bg-img">
+    <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+      <div class="banner-text text-center fade-in-up">
+        <div class="h2">
+          
+            <span id="subtitle" data-typed-text="Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析"></span>
+          
+        </div>
+
+        
+          
+  <div class="mt-3">
+    
+    
+      <span class="post-meta">
+        <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+        <time datetime="2026-05-04 12:00" pubdate>
+          2026年5月4日 中午
+        </time>
+      </span>
+    
+  </div>
+
+  <div class="mt-1">
+    
+      <span class="post-meta mr-2">
+        <i class="iconfont icon-chart"></i>
+        
+          18k 字
+        
+      </span>
+    
+
+    
+      <span class="post-meta mr-2">
+        <i class="iconfont icon-clock-fill"></i>
+        
+        
+        
+          151 分钟
+        
+      </span>
+    
+
+    
+    
+  </div>
+
+
+        
+      </div>
+
+      
+    </div>
+  </div>
+</div>
+
+
+
+</div>
+
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid nopadding-x">
+  <div class="row nomargin-x">
+    <div class="side-col d-none d-lg-block col-lg-2">
+      
+
+    </div>
+
+    <div class="col-lg-8 nopadding-x-md">
+      <div class="container nopadding-x-md" id="board-ctn">
+        <div id="board">
+          <article class="post-content mx-auto">
+            <h1 id="seo-header">Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析</h1>
+            
+            
+              <div class="markdown-body">
+                
+                <h1 id="Codex-双轨制任务驱动架构：从-steer-input-到-spawn-task-的深度解析"><a href="#Codex-双轨制任务驱动架构：从-steer-input-到-spawn-task-的深度解析" class="headerlink" title="Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析"></a>Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析</h1><h2 id="引言：当用户在终端里按下回车"><a href="#引言：当用户在终端里按下回车" class="headerlink" title="引言：当用户在终端里按下回车"></a>引言：当用户在终端里按下回车</h2><p>假设你正在使用 Codex 排查一个棘手的问题——“我们支付服务的 API 偶发 504 超时”。Codex 已经在你的代码仓库里搜索了日志模式、阅读了超时中间件的源码、分析了 Nginx 配置。它的推理过程正在终端上逐字渲染。</p>
+<p>这时你突然想到：<strong>会不会是数据库连接池耗尽导致的？</strong> 你在 TUI 中输入这行字，敲下回车。</p>
+<p>这一刻，Codex 内部发生了一件极度精妙的事。它没有中断当前的推理去”接收新指令”——那个正在运行的 AI 思考线程不需要重启，不需要取消重来。你的新输入被<strong>静默注入</strong>到了正在执行的任务中，AI 会在当前轮次的下一个循环自动读到它。</p>
+<p>这就是 Codex 的<strong>双轨制任务驱动架构</strong>。</p>
+<p>本文基于 <code>codex-rs/core/src/</code> 的真实源码，逐行拆解这一机制的底层实现。全文将以”排查 API 偶发超时”为贯穿示例。</p>
+<hr>
+<h2 id="一、核心角色：三个组件一台戏"><a href="#一、核心角色：三个组件一台戏" class="headerlink" title="一、核心角色：三个组件一台戏"></a>一、核心角色：三个组件一台戏</h2><p>在进入双轨调度逻辑之前，先厘清三个核心组件。</p>
+<h3 id="1-1-Session：状态中心"><a href="#1-1-Session：状态中心" class="headerlink" title="1.1 Session：状态中心"></a>1.1 Session：状态中心</h3><p><code>Session</code> 是 AI 对话的完整运行上下文。在它的众多字段中，有一个直接决定了用户输入走向：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/session.rs L29–31：Session 中有且只有一个 active_turn</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">struct</span> <span class="token type-definition class-name">Session</span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">// ... 其他字段 ...</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> active_turn<span class="token punctuation">:</span> <span class="token class-name">Mutex</span><span class="token operator">&lt;</span><span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">ActiveTurn</span><span class="token operator">>></span><span class="token punctuation">,</span>  <span class="token comment">// ← 决定"热注入还是冷启动"</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">super</span><span class="token punctuation">)</span> mailbox<span class="token punctuation">:</span> <span class="token class-name">Mailbox</span><span class="token punctuation">,</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">super</span><span class="token punctuation">)</span> mailbox_rx<span class="token punctuation">:</span> <span class="token class-name">Mutex</span><span class="token operator">&lt;</span><span class="token class-name">MailboxReceiver</span><span class="token operator">></span><span class="token punctuation">,</span>
+    <span class="token comment">// ...</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>active_turn</code> 是一个 <code>Mutex&lt;Option&lt;ActiveTurn&gt;&gt;</code>。<code>None</code> 意味着 AI 当前空闲，<code>Some</code> 意味着有一个正在执行的任务。这个 <code>Option</code> 就是双轨决策的第一道判断依据。</p>
+<h3 id="1-2-RegularTask：执行引擎"><a href="#1-2-RegularTask：执行引擎" class="headerlink" title="1.2 RegularTask：执行引擎"></a>1.2 RegularTask：执行引擎</h3><p><code>RegularTask</code> 是 Codex 最核心的任务类型——处理用户输入、驱动 LLM 调用、执行工具链。它在代码中定义得极其简洁：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// tasks/regular.rs L18–25：RegularTask 是一个零大小的标记类型</span>
+<span class="token attribute attr-name">#[derive(Default)]</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">struct</span> <span class="token type-definition class-name">RegularTask</span><span class="token punctuation">;</span>
+
+<span class="token keyword">impl</span> <span class="token class-name">RegularTask</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">fn</span> <span class="token function-definition function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token keyword">Self</span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">Self</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>但它的 <code>run()</code> 方法不简单——内部是一个 <strong>loop</strong>：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// tasks/regular.rs L71–86：RegularTask 的执行循环</span>
+<span class="token keyword">loop</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">let</span> last_agent_message <span class="token operator">=</span> <span class="token function">run_turn</span><span class="token punctuation">(</span>
+        <span class="token class-name">Arc</span><span class="token punctuation">::</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">)</span><span class="token punctuation">,</span>
+        <span class="token class-name">Arc</span><span class="token punctuation">::</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>ctx<span class="token punctuation">)</span><span class="token punctuation">,</span>
+        next_input<span class="token punctuation">,</span>
+        prewarmed_client_session<span class="token punctuation">.</span><span class="token function">take</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        cancellation_token<span class="token punctuation">.</span><span class="token function">child_token</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token function">instrument</span><span class="token punctuation">(</span>run_turn_span<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+    <span class="token keyword">if</span> <span class="token operator">!</span>sess<span class="token punctuation">.</span><span class="token function">has_pending_input</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>   <span class="token comment">// ← 检查邮箱</span>
+        <span class="token keyword">return</span> last_agent_message<span class="token punctuation">;</span>          <span class="token comment">// 没有新消息 → 退出</span>
+    <span class="token punctuation">&#125;</span>
+    next_input <span class="token operator">=</span> <span class="token class-name">Vec</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>                <span class="token comment">// 有新消息 → 再来一圈</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>关键在于 <code>has_pending_input()</code> 的检查：一个 <code>RegularTask</code> 可以执行多次 <code>run_turn</code>——每当用户在 AI 思考过程中发送了新输入，loop 就会发现邮箱中有新消息，于是<strong>不退出，继续循环</strong>。</p>
+<h3 id="1-3-TurnState：异步信箱"><a href="#1-3-TurnState：异步信箱" class="headerlink" title="1.3 TurnState：异步信箱"></a>1.3 TurnState：异步信箱</h3><p><code>TurnState</code> 是每个活跃轮次的可变状态。它包含了一个名为 <code>pending_input</code> 的队列：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// state/turn.rs L108–123：TurnState 内部状态</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">struct</span> <span class="token type-definition class-name">TurnState</span> <span class="token punctuation">&#123;</span>
+    pending_approvals<span class="token punctuation">:</span> <span class="token class-name">HashMap</span><span class="token operator">&lt;</span><span class="token class-name">String</span><span class="token punctuation">,</span> <span class="token namespace">oneshot<span class="token punctuation">::</span></span><span class="token class-name">Sender</span><span class="token operator">&lt;</span><span class="token class-name">ReviewDecision</span><span class="token operator">>></span><span class="token punctuation">,</span>
+    pending_request_permissions<span class="token punctuation">:</span> <span class="token class-name">HashMap</span><span class="token operator">&lt;</span><span class="token class-name">String</span><span class="token punctuation">,</span> <span class="token class-name">PendingRequestPermissions</span><span class="token operator">></span><span class="token punctuation">,</span>
+    pending_user_input<span class="token punctuation">:</span> <span class="token class-name">HashMap</span><span class="token operator">&lt;</span><span class="token class-name">String</span><span class="token punctuation">,</span> <span class="token namespace">oneshot<span class="token punctuation">::</span></span><span class="token class-name">Sender</span><span class="token operator">&lt;</span><span class="token class-name">RequestUserInputResponse</span><span class="token operator">>></span><span class="token punctuation">,</span>
+    pending_elicitations<span class="token punctuation">:</span> <span class="token class-name">HashMap</span><span class="token operator">&lt;</span><span class="token punctuation">...</span><span class="token operator">></span><span class="token punctuation">,</span>
+    pending_dynamic_tools<span class="token punctuation">:</span> <span class="token class-name">HashMap</span><span class="token operator">&lt;</span><span class="token punctuation">...</span><span class="token operator">></span><span class="token punctuation">,</span>
+    pending_input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">ResponseInputItem</span><span class="token operator">></span><span class="token punctuation">,</span>          <span class="token comment">// ← 信箱本体</span>
+    mailbox_delivery_phase<span class="token punctuation">:</span> <span class="token class-name">MailboxDeliveryPhase</span><span class="token punctuation">,</span>   <span class="token comment">// ← 信箱状态机</span>
+    granted_permissions<span class="token punctuation">:</span> <span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">AdditionalPermissionProfile</span><span class="token operator">></span><span class="token punctuation">,</span>
+    strict_auto_review_enabled<span class="token punctuation">:</span> <span class="token keyword">bool</span><span class="token punctuation">,</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> tool_calls<span class="token punctuation">:</span> <span class="token keyword">u64</span><span class="token punctuation">,</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> has_memory_citation<span class="token punctuation">:</span> <span class="token keyword">bool</span><span class="token punctuation">,</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> token_usage_at_turn_start<span class="token punctuation">:</span> <span class="token class-name">TokenUsage</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>pending_input</code> 就是用户干预消息的”落脚点”。当你中途输入”查一下数据库连接池配置”时，这行文字最终就放在这里——然后 <code>RegularTask</code> 的 loop 下一圈会在这里读到它。</p>
+<p><code>TurnState</code> 被包裹在 <code>Arc&lt;Mutex&lt;TurnState&gt;&gt;</code> 中，位于 <code>ActiveTurn</code> 结构体内部：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// state/turn.rs L28–32</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">struct</span> <span class="token type-definition class-name">ActiveTurn</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> tasks<span class="token punctuation">:</span> <span class="token class-name">IndexMap</span><span class="token operator">&lt;</span><span class="token class-name">String</span><span class="token punctuation">,</span> <span class="token class-name">RunningTask</span><span class="token operator">></span><span class="token punctuation">,</span>
+    <span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> turn_state<span class="token punctuation">:</span> <span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">Mutex</span><span class="token operator">&lt;</span><span class="token class-name">TurnState</span><span class="token operator">>></span><span class="token punctuation">,</span>  <span class="token comment">// ← 线程安全包装</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>三个组件的关系可以总结为：<strong>Session 持有 Optional 的 ActiveTurn，ActiveTurn 内部持有 TurnState（含信箱），RegularTask 的 run() loop 消费信箱内容。</strong></p>
+<hr>
+<h2 id="二、双轨调度：user-input-or-turn-inner-完整拆解"><a href="#二、双轨调度：user-input-or-turn-inner-完整拆解" class="headerlink" title="二、双轨调度：user_input_or_turn_inner 完整拆解"></a>二、双轨调度：user_input_or_turn_inner 完整拆解</h2><p>这是全文的核心章节。当用户的 Op 到达 <code>submission_loop</code>，match 到 <code>Op::UserInput</code> 分支后，会调用 <code>user_input_or_turn</code>。它自身只是一个薄壳：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// handlers.rs L112–119</span>
+<span class="token keyword">pub</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">user_input_or_turn</span><span class="token punctuation">(</span>sess<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">Session</span><span class="token operator">></span><span class="token punctuation">,</span> sub_id<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> op<span class="token punctuation">:</span> <span class="token class-name">Op</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token function">user_input_or_turn_inner</span><span class="token punctuation">(</span>
+        sess<span class="token punctuation">,</span> sub_id<span class="token punctuation">,</span> op<span class="token punctuation">,</span>
+        <span class="token comment">/*mirror_user_text_to_realtime*/</span> <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>真正的逻辑在 <code>user_input_or_turn_inner</code> 中。它的职责分三段：</p>
+<h3 id="2-1-第一段：解析-Op（L131–247）"><a href="#2-1-第一段：解析-Op（L131–247）" class="headerlink" title="2.1 第一段：解析 Op（L131–247）"></a>2.1 第一段：解析 Op（L131–247）</h3><p>将 <code>Op::UserTurn</code> &#x2F; <code>Op::UserInputWithTurnContext</code> &#x2F; <code>Op::UserInput</code> 三种变体统一解析为 <code>(items, updates, metadata)</code> 三元组。这一步处理了大量配置合并逻辑（协作模式、权限策略、沙箱级别、模型选择等），我们略过细节。</p>
+<h3 id="2-2-第二段：创建-TurnContext（L249–254）"><a href="#2-2-第二段：创建-TurnContext（L249–254）" class="headerlink" title="2.2 第二段：创建 TurnContext（L249–254）"></a>2.2 第二段：创建 TurnContext（L249–254）</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// handlers.rs L249–254</span>
+<span class="token keyword">let</span> <span class="token class-name">Ok</span><span class="token punctuation">(</span>current_context<span class="token punctuation">)</span> <span class="token operator">=</span> sess<span class="token punctuation">.</span><span class="token function">new_turn_with_sub_id</span><span class="token punctuation">(</span>sub_id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> updates<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">return</span><span class="token punctuation">;</span>  <span class="token comment">// new_turn_with_sub_id 已经发过错误事件</span>
+<span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+sess<span class="token punctuation">.</span><span class="token function">maybe_emit_unknown_model_warning_for_turn</span><span class="token punctuation">(</span>current_context<span class="token punctuation">.</span><span class="token function">as_ref</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>new_turn_with_sub_id</code> 创建一个新的 <code>TurnContext</code>——包含 sub_id、模型信息、遥测状态、协作模式等元数据。无论最终走热注入还是冷启动，这个 Context 都会被用到。</p>
+<h3 id="2-3-第三段：双轨分叉（L255–291）——全文最关键代码"><a href="#2-3-第三段：双轨分叉（L255–291）——全文最关键代码" class="headerlink" title="2.3 第三段：双轨分叉（L255–291）——全文最关键代码"></a>2.3 第三段：双轨分叉（L255–291）——<strong>全文最关键代码</strong></h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// handlers.rs L255–283：双轨决策的核心分叉</span>
+<span class="token keyword">let</span> accepted_items <span class="token operator">=</span> <span class="token keyword">match</span> sess
+    <span class="token punctuation">.</span><span class="token function">steer_input</span><span class="token punctuation">(</span>
+        items<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        <span class="token comment">/*expected_turn_id*/</span> <span class="token class-name">None</span><span class="token punctuation">,</span>
+        responsesapi_client_metadata<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token keyword">await</span>
+<span class="token punctuation">&#123;</span>
+    <span class="token class-name">Ok</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>                                              <span class="token comment">// ← 热路径</span>
+        current_context<span class="token punctuation">.</span>session_telemetry<span class="token punctuation">.</span><span class="token function">user_prompt</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>items<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token class-name">Some</span><span class="token punctuation">(</span>items<span class="token punctuation">)</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>items<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>          <span class="token comment">// ← 冷路径</span>
+        <span class="token keyword">if</span> <span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>responsesapi_client_metadata<span class="token punctuation">)</span> <span class="token operator">=</span> responsesapi_client_metadata <span class="token punctuation">&#123;</span>
+            current_context
+                <span class="token punctuation">.</span>turn_metadata_state
+                <span class="token punctuation">.</span><span class="token function">set_responsesapi_client_metadata</span><span class="token punctuation">(</span>responsesapi_client_metadata<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token punctuation">&#125;</span>
+        current_context<span class="token punctuation">.</span>session_telemetry<span class="token punctuation">.</span><span class="token function">user_prompt</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>items<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        sess<span class="token punctuation">.</span><span class="token function">refresh_mcp_servers_if_requested</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>current_context<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> accepted_items <span class="token operator">=</span> items<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        sess<span class="token punctuation">.</span><span class="token function">spawn_task</span><span class="token punctuation">(</span>
+            <span class="token class-name">Arc</span><span class="token punctuation">::</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>current_context<span class="token punctuation">)</span><span class="token punctuation">,</span>
+            items<span class="token punctuation">,</span>
+            <span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>tasks<span class="token punctuation">::</span></span><span class="token class-name">RegularTask</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>               <span class="token comment">// ← 创建新 Task</span>
+        <span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token class-name">Some</span><span class="token punctuation">(</span>accepted_items<span class="token punctuation">)</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token class-name">Err</span><span class="token punctuation">(</span>err<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>                                           <span class="token comment">// ← 错误路径</span>
+        sess<span class="token punctuation">.</span><span class="token function">send_event_raw</span><span class="token punctuation">(</span><span class="token class-name">Event</span> <span class="token punctuation">&#123;</span>
+            id<span class="token punctuation">:</span> sub_id<span class="token punctuation">,</span>
+            msg<span class="token punctuation">:</span> <span class="token class-name">EventMsg</span><span class="token punctuation">::</span><span class="token class-name">Error</span><span class="token punctuation">(</span>err<span class="token punctuation">.</span><span class="token function">to_error_event</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token class-name">None</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>这个 <code>match</code> 就是双轨制的<strong>全部秘密</strong>。三条分支对应三种场景：</p>
+<table>
+<thead>
+<tr>
+<th align="left">分支</th>
+<th align="left">条件</th>
+<th align="left">含义</th>
+<th align="left">用户感知</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><code>Ok(_)</code></td>
+<td align="left">AI 正在运行 Regular Task</td>
+<td align="left"><strong>热注入</strong>：输入塞入信箱</td>
+<td align="left">“AI 收到我的纠正，继续工作”</td>
+</tr>
+<tr>
+<td align="left"><code>Err(NoActiveTurn(items))</code></td>
+<td align="left">AI 当前空闲</td>
+<td align="left"><strong>冷启动</strong>：发起新 Task</td>
+<td align="left">“AI 开始排查我的问题”</td>
+</tr>
+<tr>
+<td align="left"><code>Err(other)</code></td>
+<td align="left">状态不匹配&#x2F;类型冲突</td>
+<td align="left">透传错误事件</td>
+<td align="left">“操作被拒绝，原因是…”</td>
+</tr>
+</tbody></table>
+<p>用我们的示例来解释：</p>
+<ul>
+<li><p><strong>场景 A（热注入）</strong>：Codex 正在搜索日志模式时，你输入”查一下数据库连接池配置”→ <code>steer_input</code> 成功 → 输入注入当前 Turn 的信箱 → 当前 RegularTask 下一圈 <code>run_turn</code> 会读到它。</p>
+</li>
+<li><p><strong>场景 B（冷启动）</strong>：Codex 刚启动，你输入”排查这个 API 为什么偶发超时”→ <code>steer_input</code> 返回 <code>NoActiveTurn</code> → 调用 <code>spawn_task(RegularTask::new())</code> → 全新 Tokio Task 被创建，AI 开始工作。</p>
+</li>
+<li><p><strong>场景 C（错误）</strong>：Codex 正在执行代码审查（Review Task），你试图干预 → 返回 <code>ActiveTurnNotSteerable</code> → 前端收到错误提示。</p>
+</li>
+</ul>
+<p>下面是一个数据流时序图，梳理从用户输入到任务执行的全链路：</p>
+<figure><div class="code-wrapper"><pre class="mermaid">sequenceDiagram
+    participant U as 用户
+    participant SL as submission_loop
+    participant UIT as user_input_or_turn_inner
+    participant SI as steer_input
+    participant AT as active_turn
+    participant RT as RegularTask
+
+    Note over U,RT: 场景A：热注入（AI 正在运行）
+
+    U->>SL: Op::UserInput("查一下连接池配置")
+    SL->>UIT: 调用 user_input_or_turn 解析 Op
+    UIT->>SI: steer_input(items, None, metadata)
+    SI->>AT: lock active_turn → Some(Regular)
+    AT-->>SI: 获取 active_turn_id
+    SI->>AT: lock turn_state → push_pending_input(input)
+    SI-->>UIT: Ok(active_turn_id)
+    UIT->>RT: 无操作（RegularTask 循环下一圈自动消费信箱）
+    Note right of RT: run_turn 结束时检查 has_pending_input → 继续循环
+
+    Note over U,RT: 场景B：冷启动（AI 空闲）
+
+    U->>SL: Op::UserInput("排查 API 偶发超时")
+    SL->>UIT: 调用 user_input_or_turn 解析 Op
+    UIT->>SI: steer_input(items, None, metadata)
+    SI->>AT: lock active_turn → None
+    SI-->>UIT: Err(NoActiveTurn(items))
+    UIT->>UI: spawn_task(RegularTask::new())
+    Note right of UIT: abort_all_tasks → start_task → tokio::spawn
+    RT->>RT: RegularTask::run() 开始 loop</pre></div></figure>
+
+<hr>
+<h2 id="三、热注入：steer-input-的五道关卡"><a href="#三、热注入：steer-input-的五道关卡" class="headerlink" title="三、热注入：steer_input 的五道关卡"></a>三、热注入：steer_input 的五道关卡</h2><p><code>steer_input</code> 是双轨调度中的”评委”。它不启动任何任务，只做判断和投递。它设在 <code>Session</code> 上，源码在 <code>session/mod.rs</code> L2963–3019。我们逐关拆解。</p>
+<h3 id="关卡-1：空输入检测"><a href="#关卡-1：空输入检测" class="headerlink" title="关卡 1：空输入检测"></a>关卡 1：空输入检测</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L2969–2971</span>
+<span class="token keyword">if</span> input<span class="token punctuation">.</span><span class="token function">is_empty</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">EmptyInput</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>不废话，空输入直接拒绝。<code>SteerInputError</code> 是一个枚举（见第七章），每个错误变体都在上层有对应的处理路径。</p>
+<h3 id="关卡-2：活跃任务存在性"><a href="#关卡-2：活跃任务存在性" class="headerlink" title="关卡 2：活跃任务存在性"></a>关卡 2：活跃任务存在性</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L2973–2976</span>
+<span class="token keyword">let</span> <span class="token keyword">mut</span> active <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span>active_turn<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>active_turn<span class="token punctuation">)</span> <span class="token operator">=</span> active<span class="token punctuation">.</span><span class="token function">as_mut</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>获取 <code>active_turn</code> 的互斥锁。如果为 <code>None</code>，返回 <code>NoActiveTurn</code>——携带着原始 <code>input</code>，不丢失数据。这是”错误即逻辑”模式的核心：上层 match 到这个错误就直接走冷启动路径。</p>
+<h3 id="关卡-3：Turn-ID-校验"><a href="#关卡-3：Turn-ID-校验" class="headerlink" title="关卡 3：Turn ID 校验"></a>关卡 3：Turn ID 校验</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L2978–2989</span>
+<span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token punctuation">(</span>active_turn_id<span class="token punctuation">,</span> _<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token operator">=</span> active_turn<span class="token punctuation">.</span>tasks<span class="token punctuation">.</span><span class="token function">first</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+
+<span class="token keyword">if</span> <span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>expected_turn_id<span class="token punctuation">)</span> <span class="token operator">=</span> expected_turn_id
+    <span class="token operator">&amp;&amp;</span> expected_turn_id <span class="token operator">!=</span> active_turn_id
+<span class="token punctuation">&#123;</span>
+    <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">ExpectedTurnMismatch</span> <span class="token punctuation">&#123;</span>
+        expected<span class="token punctuation">:</span> expected_turn_id<span class="token punctuation">.</span><span class="token function">to_string</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        actual<span class="token punctuation">:</span> active_turn_id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>调用方可以指定 <code>expected_turn_id</code> 来确保”我干预的就是我以为的那个 Turn”。在 <code>user_input_or_turn_inner</code> 中传的是 <code>None</code>——不校验。但在多线程并发操作同一 Session 的场景中，这个校验是并发安全的关键守护。</p>
+<h3 id="关卡-4：TaskKind-守卫（关键！）"><a href="#关卡-4：TaskKind-守卫（关键！）" class="headerlink" title="关卡 4：TaskKind 守卫（关键！）"></a>关卡 4：TaskKind 守卫（关键！）</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L2991–3004</span>
+<span class="token keyword">match</span> active_turn<span class="token punctuation">.</span>tasks<span class="token punctuation">.</span><span class="token function">first</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token function">map</span><span class="token punctuation">(</span><span class="token closure-params"><span class="token closure-punctuation punctuation">|</span><span class="token punctuation">(</span>_<span class="token punctuation">,</span> task<span class="token punctuation">)</span><span class="token closure-punctuation punctuation">|</span></span> task<span class="token punctuation">.</span>kind<span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>state<span class="token punctuation">::</span></span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Regular</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span><span class="token punctuation">&#125;</span>    <span class="token comment">// ✅ 放行</span>
+    <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>state<span class="token punctuation">::</span></span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Review</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>       <span class="token comment">// ❌ 拒绝</span>
+        <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">ActiveTurnNotSteerable</span> <span class="token punctuation">&#123;</span>
+            turn_kind<span class="token punctuation">:</span> <span class="token class-name">NonSteerableTurnKind</span><span class="token punctuation">::</span><span class="token class-name">Review</span><span class="token punctuation">,</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>state<span class="token punctuation">::</span></span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Compact</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>      <span class="token comment">// ❌ 拒绝</span>
+        <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">ActiveTurnNotSteerable</span> <span class="token punctuation">&#123;</span>
+            turn_kind<span class="token punctuation">:</span> <span class="token class-name">NonSteerableTurnKind</span><span class="token punctuation">::</span><span class="token class-name">Compact</span><span class="token punctuation">,</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token class-name">None</span> <span class="token operator">=></span> <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>三种 <code>TaskKind</code> 只有 <code>Regular</code> 允许被用户干预。<code>Review</code>（代码审查）和 <code>Compact</code>（上下文压缩）是”敏感手术”——干预可能破坏内部逻辑的原子性。这一点在第六章会展开。</p>
+<h3 id="关卡-5：投递到信箱"><a href="#关卡-5：投递到信箱" class="headerlink" title="关卡 5：投递到信箱"></a>关卡 5：投递到信箱</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L3015–3018</span>
+<span class="token keyword">let</span> <span class="token keyword">mut</span> turn_state <span class="token operator">=</span> active_turn<span class="token punctuation">.</span>turn_state<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+turn_state<span class="token punctuation">.</span><span class="token function">push_pending_input</span><span class="token punctuation">(</span>input<span class="token punctuation">.</span><span class="token function">into</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+turn_state<span class="token punctuation">.</span><span class="token function">accept_mailbox_delivery_for_current_turn</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token class-name">Ok</span><span class="token punctuation">(</span>active_turn_id<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>这是热注入的”落点”。两步操作：</p>
+<ol>
+<li><code>push_pending_input(input.into())</code>——用户输入存入 <code>TurnState.pending_input</code></li>
+<li><code>accept_mailbox_delivery_for_current_turn()</code>——强制将邮箱状态机切回 <code>CurrentTurn</code>，确保子 Agent 邮件也能被当前 Turn 消费</li>
+</ol>
+<p>两步之间是一个<strong>原子操作</strong>（在同一个 <code>turn_state</code> 锁内），避免了”推入了输入但邮箱状态不匹配”的竞态。</p>
+<hr>
+<h2 id="四、冷启动：spawn-task-→-RegularTask-的生命周期"><a href="#四、冷启动：spawn-task-→-RegularTask-的生命周期" class="headerlink" title="四、冷启动：spawn_task → RegularTask 的生命周期"></a>四、冷启动：spawn_task → RegularTask 的生命周期</h2><p>当 <code>steer_input</code> 返回 <code>NoActiveTurn</code>，冷启动路径被激活。三步走：清理→准备→点火。</p>
+<h3 id="4-1-spawn-task：清理旧任务"><a href="#4-1-spawn-task：清理旧任务" class="headerlink" title="4.1 spawn_task：清理旧任务"></a>4.1 spawn_task：清理旧任务</h3><figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// tasks/mod.rs L291–301</span>
+<span class="token keyword">impl</span> <span class="token class-name">Session</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">pub</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">spawn_task</span><span class="token operator">&lt;</span><span class="token class-name">T</span><span class="token punctuation">:</span> <span class="token class-name">SessionTask</span><span class="token operator">></span><span class="token punctuation">(</span>
+        <span class="token keyword">self</span><span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token keyword">Self</span><span class="token operator">></span><span class="token punctuation">,</span>
+        turn_context<span class="token punctuation">:</span> <span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">TurnContext</span><span class="token operator">></span><span class="token punctuation">,</span>
+        input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">,</span>
+        task<span class="token punctuation">:</span> <span class="token class-name">T</span><span class="token punctuation">,</span>
+    <span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">abort_all_tasks</span><span class="token punctuation">(</span><span class="token class-name">TurnAbortReason</span><span class="token punctuation">::</span><span class="token class-name">Replaced</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">clear_connector_selection</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">start_task</span><span class="token punctuation">(</span>turn_context<span class="token punctuation">,</span> input<span class="token punctuation">,</span> task<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>abort_all_tasks</code> 确保之前残留的任何任务被彻底清理——包括取消 CancellationToken、等待 JoinHandle 完成。<code>clear_connector_selection</code> 重置模型连接器状态，为新 Turn 准备干净的运行环境。</p>
+<h3 id="4-2-start-task：创建执行单元"><a href="#4-2-start-task：创建执行单元" class="headerlink" title="4.2 start_task：创建执行单元"></a>4.2 start_task：创建执行单元</h3><p><code>start_task</code> 约 120 行（tasks&#x2F;mod.rs L303–429），核心流程是：</p>
+<p><strong>① 设置 Turn 元数据</strong>（L309–319）：<code>CancellationToken::new()</code> + <code>Notify</code> 信号量 + 时间戳记录。</p>
+<p><strong>② 合并积压消息</strong>（L340–357）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> queued_response_items <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">take_queued_response_items_for_next_turn</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> mailbox_items <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">get_pending_input</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token comment">// 将两路消息推入新 Turn 的 TurnState</span>
+<span class="token keyword">for</span> item <span class="token keyword">in</span> queued_response_items <span class="token punctuation">&#123;</span>
+    turn_state<span class="token punctuation">.</span><span class="token function">push_pending_input</span><span class="token punctuation">(</span>item<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span>
+<span class="token keyword">for</span> item <span class="token keyword">in</span> mailbox_items <span class="token punctuation">&#123;</span>
+    turn_state<span class="token punctuation">.</span><span class="token function">push_pending_input</span><span class="token punctuation">(</span>item<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><strong>③ 注册活跃任务</strong>（L359–361）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> <span class="token keyword">mut</span> active <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span>active_turn<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> turn <span class="token operator">=</span> active<span class="token punctuation">.</span><span class="token function">get_or_insert_with</span><span class="token punctuation">(</span><span class="token class-name">ActiveTurn</span><span class="token punctuation">::</span>default<span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>get_or_insert_with</code> 是 Rust 的惯用法——如果 <code>active_turn</code> 为 <code>None</code>，创建一个新的 <code>ActiveTurn</code>。</p>
+<p><strong>④ spawn Tokio 任务</strong>（L382–414）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> handle <span class="token operator">=</span> <span class="token namespace">tokio<span class="token punctuation">::</span></span><span class="token function">spawn</span><span class="token punctuation">(</span>
+    <span class="token keyword">async</span> <span class="token keyword">move</span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">let</span> last_agent_message <span class="token operator">=</span> task_for_run
+            <span class="token punctuation">.</span><span class="token function">run</span><span class="token punctuation">(</span>session_ctx<span class="token punctuation">,</span> ctx<span class="token punctuation">,</span> input<span class="token punctuation">,</span> task_cancellation_token<span class="token punctuation">.</span><span class="token function">child_token</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+            <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token comment">// flush rollout, emit TurnComplete, notify done...</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token punctuation">.</span><span class="token function">instrument</span><span class="token punctuation">(</span>task_span<span class="token punctuation">)</span><span class="token punctuation">,</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<h3 id="4-3-RegularTask-run-：loop-还是-once？"><a href="#4-3-RegularTask-run-：loop-还是-once？" class="headerlink" title="4.3 RegularTask.run()：loop 还是 once？"></a>4.3 RegularTask.run()：loop 还是 once？</h3><p>这是最容易被误解的地方。很多人以为 <code>run()</code> 执行一次 <code>run_turn</code> 就结束了。但实际代码是一个 <strong>loop</strong>（regular.rs L71–86）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-none"><code class="language-none">run_turn() → has_pending_input()? → Yes → run_turn()（空输入，消费信箱）→ 再检查
+                                    → No  → 退出，返回 last_agent_message<span aria-hidden="true" class="line-numbers-rows"><span></span><span></span></span></code></pre></div></figure>
+
+<p>这意味着一个 <code>RegularTask</code> 的生命周期可能跨越<strong>多轮用户交互</strong>：</p>
+<ol>
+<li>用户输入”排查 API 超时” → 冷启动 RegularTask → <code>run_turn(输入)</code> 执行 → LLM 搜索日志、读取源码</li>
+<li>用户中途输入”查数据库连接池” → 热注入 → <code>has_pending_input() == true</code> → 不退出</li>
+<li><code>run_turn(空)</code> → 从信箱中取出”查数据库连接池” → LLM 在新一轮中分析连接池耗尽问题</li>
+</ol>
+<p>这种设计避免了”每次用户纠正都创建新 Task”的开销，同时保持了逻辑的清晰：<strong>一个 Task &#x3D; 一个连续的用户意图演化过程</strong>。</p>
+<hr>
+<h2 id="五、邮箱系统：pending-input-的投递与消费"><a href="#五、邮箱系统：pending-input-的投递与消费" class="headerlink" title="五、邮箱系统：pending_input 的投递与消费"></a>五、邮箱系统：pending_input 的投递与消费</h2><p>双轨调度依赖一个精巧的邮箱系统。它的设计相当于一个异步的生产者-消费者模式。</p>
+<h3 id="5-1-投递侧"><a href="#5-1-投递侧" class="headerlink" title="5.1 投递侧"></a>5.1 投递侧</h3><p>所有用户中途输入都经过同一道门：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// state/turn.rs L221–222</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">fn</span> <span class="token function-definition function">push_pending_input</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">mut</span> <span class="token keyword">self</span><span class="token punctuation">,</span> input<span class="token punctuation">:</span> <span class="token class-name">ResponseInputItem</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">self</span><span class="token punctuation">.</span>pending_input<span class="token punctuation">.</span><span class="token function">push</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token comment">// state/turn.rs L233–246</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">fn</span> <span class="token function-definition function">take_pending_input</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">mut</span> <span class="token keyword">self</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">ResponseInputItem</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">if</span> <span class="token keyword">self</span><span class="token punctuation">.</span>pending_input<span class="token punctuation">.</span><span class="token function">is_empty</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+        <span class="token class-name">Vec</span><span class="token punctuation">::</span><span class="token function">with_capacity</span><span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">)</span>
+    <span class="token punctuation">&#125;</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">let</span> <span class="token keyword">mut</span> ret <span class="token operator">=</span> <span class="token class-name">Vec</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token namespace">std<span class="token punctuation">::</span>mem<span class="token punctuation">::</span></span><span class="token function">swap</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">mut</span> ret<span class="token punctuation">,</span> <span class="token operator">&amp;</span><span class="token keyword">mut</span> <span class="token keyword">self</span><span class="token punctuation">.</span>pending_input<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        ret
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>take_pending_input</code> 使用了 <code>std::mem::swap</code> 技巧：用一个空 Vec 替换 <code>pending_input</code>，取走所有积压内容而不拷贝。这是在持有 <code>Mutex</code> 锁的状态下的零拷贝优化。</p>
+<h3 id="5-2-消费侧：双源合并"><a href="#5-2-消费侧：双源合并" class="headerlink" title="5.2 消费侧：双源合并"></a>5.2 消费侧：双源合并</h3><p><code>run_turn</code> 在每轮采样前都会调用 <code>get_pending_input</code>，它不仅从 <code>TurnState.pending_input</code> 取，还会合并 Mailbox 管道（子 Agent 之间的通信）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// session/mod.rs L3123–3157</span>
+<span class="token keyword">pub</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">get_pending_input</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">ResponseInputItem</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">// 步骤 1：取出 TurnState 中的 pending_input</span>
+    <span class="token keyword">let</span> <span class="token punctuation">(</span>pending_input<span class="token punctuation">,</span> accepts_mailbox_delivery<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token punctuation">&#123;</span> <span class="token comment">/* lock turn_state */</span> <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+    <span class="token comment">// 步骤 2：如果邮箱接受投递，合并 Mailbox 管道中的子 Agent 邮件</span>
+    <span class="token keyword">if</span> <span class="token operator">!</span>accepts_mailbox_delivery <span class="token punctuation">&#123;</span>
+        <span class="token keyword">return</span> pending_input<span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+    <span class="token keyword">let</span> mailbox_items <span class="token operator">=</span> <span class="token punctuation">&#123;</span> <span class="token comment">/* lock mailbox_rx, drain */</span> <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+    <span class="token comment">// 步骤 3：合并两种来源</span>
+    <span class="token comment">// ...</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<h3 id="5-3-邮箱状态机"><a href="#5-3-邮箱状态机" class="headerlink" title="5.3 邮箱状态机"></a>5.3 邮箱状态机</h3><p><code>MailboxDeliveryPhase</code> 管理”子 Agent 邮件能否被当前 Turn 消费”：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// state/turn.rs L34–53</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">MailboxDeliveryPhase</span> <span class="token punctuation">&#123;</span>
+    <span class="token comment">/// 子 Agent 邮件可被当前 Turn 消费（默认状态）</span>
+    <span class="token attribute attr-name">#[default]</span>
+    <span class="token class-name">CurrentTurn</span><span class="token punctuation">,</span>
+    <span class="token comment">/// 当前 Turn 已输出最终答案，邮件留给下一 Turn</span>
+    <span class="token class-name">NextTurn</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>状态机转换规则：</p>
+<ul>
+<li><strong>Turn 启动</strong> → <code>CurrentTurn</code></li>
+<li><strong>Assitant 发出最终消息</strong> → <code>NextTurn</code>（保护已生成的答案完整性）</li>
+<li><strong>用户 steer_input 或 tool_call 产生</strong> → 切回 <code>CurrentTurn</code></li>
+</ul>
+<p><code>steer_input</code> 中有这样一行（mod.rs L3017）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust">turn_state<span class="token punctuation">.</span><span class="token function">accept_mailbox_delivery_for_current_turn</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
+
+<p>这意味着用户的干预行为不仅注入新输入，还会<strong>重新打开邮箱</strong>——让之前被挡在门外的子 Agent 报告也能进入当前 Turn。这样用户说”查连接池”时，之前的子 Agent 结果也不会丢失。</p>
+<h3 id="5-4-检查侧：has-pending-input"><a href="#5-4-检查侧：has-pending-input" class="headerlink" title="5.4 检查侧：has_pending_input"></a>5.4 检查侧：has_pending_input</h3><p><code>RegularTask</code> loop 的退出判断依赖 <code>has_pending_input</code>（session&#x2F;mod.rs L3181–3202）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">has_pending_input</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token keyword">bool</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">let</span> <span class="token punctuation">(</span>has_turn_pending_input<span class="token punctuation">,</span> accepts_mailbox_delivery<span class="token punctuation">)</span> <span class="token operator">=</span> <span class="token punctuation">&#123;</span> <span class="token comment">/* lock */</span> <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+    <span class="token keyword">if</span> has_turn_pending_input <span class="token punctuation">&#123;</span> <span class="token keyword">return</span> <span class="token boolean">true</span><span class="token punctuation">;</span> <span class="token punctuation">&#125;</span>
+    <span class="token keyword">if</span> <span class="token operator">!</span>accepts_mailbox_delivery <span class="token punctuation">&#123;</span> <span class="token keyword">return</span> <span class="token boolean">false</span><span class="token punctuation">;</span> <span class="token punctuation">&#125;</span>
+    <span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">has_pending_mailbox_items</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>三段逻辑：先检查 TurnState 里的直接输入 → 再检查远程子 Agent 邮箱 → 有任何一个就继续循环。这确保了”只要还有没处理的消息，Task 就不退出”。</p>
+<hr>
+<h2 id="六、任务类型守卫：为什么-Review-Compact-不可干预"><a href="#六、任务类型守卫：为什么-Review-Compact-不可干预" class="headerlink" title="六、任务类型守卫：为什么 Review&#x2F;Compact 不可干预"></a>六、任务类型守卫：为什么 Review&#x2F;Compact 不可干预</h2><p>Codex 定义了三种任务类型：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// state/turn.rs L64–69</span>
+<span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">TaskKind</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">Regular</span><span class="token punctuation">,</span>
+    <span class="token class-name">Review</span><span class="token punctuation">,</span>
+    <span class="token class-name">Compact</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>steer_input</code> 只对 <code>Regular</code> 放行。这个设计不是防御性的——它有明确的语义含义：</p>
+<p><strong>Review 任务</strong>：AI 正在进行一次完整的代码审查。审查过程会建立对代码库的连贯理解，中途插入新指令会破坏审查上下文的完整性。想象你在 code review 到一半时有人拍了拍你说”顺便把那个也修了”——结果可能是两个都没做好。</p>
+<p><strong>Compact 任务</strong>：AI 正在压缩对话上下文（将早期消息转为摘要以防止 token 爆炸）。这是一个内部维护操作，压缩过程需要精确知道”哪些历史需要保留”——此时如果有新输入进来，可能导致压缩的边界条件出错，丢失关键历史。</p>
+<p>这个守卫的实现方式值得注意——用的是 <strong>Rust 的模式匹配穷尽检查</strong>（match on enum），而不是运行时 if&#x2F;else：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">match</span> active_turn<span class="token punctuation">.</span>tasks<span class="token punctuation">.</span><span class="token function">first</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token function">map</span><span class="token punctuation">(</span><span class="token closure-params"><span class="token closure-punctuation punctuation">|</span><span class="token punctuation">(</span>_<span class="token punctuation">,</span> task<span class="token punctuation">)</span><span class="token closure-punctuation punctuation">|</span></span> task<span class="token punctuation">.</span>kind<span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>state<span class="token punctuation">::</span></span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Regular</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span><span class="token punctuation">&#125;</span>      <span class="token comment">// 编译期保证不会漏分支</span>
+    <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>state<span class="token punctuation">::</span></span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Review</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 拒绝 */</span> <span class="token punctuation">&#125;</span>
+    <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>state<span class="token punctuation">::</span></span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Compact</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 拒绝 */</span> <span class="token punctuation">&#125;</span>
+    <span class="token class-name">None</span> <span class="token operator">=></span> <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>如果将来有人新增了 <code>TaskKind::BackgroundWarmup</code> 变体，编译器会在编译期报错，迫使开发者显式决定”这个新类型能不能被用户干预”。而不是悄悄漏过去。</p>
+<hr>
+<h2 id="七、错误即逻辑：SteerInputError-的设计哲学"><a href="#七、错误即逻辑：SteerInputError-的设计哲学" class="headerlink" title="七、错误即逻辑：SteerInputError 的设计哲学"></a>七、错误即逻辑：SteerInputError 的设计哲学</h2><p>传统代码中，”判断是否可以做某事”通常用 if&#x2F;else：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// ❌ 传统做法：先查询状态，再分支</span>
+<span class="token keyword">if</span> session<span class="token punctuation">.</span><span class="token function">has_active_task</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    session<span class="token punctuation">.</span><span class="token function">inject_input</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
+    session<span class="token punctuation">.</span><span class="token function">start_new_task</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>但这里有一个<strong>竞态窗口</strong>：<code>has_active_task()</code> 和 <code>inject_input()</code> 之间，Task 可能刚好结束。Codex 的做法是<strong>先尝试，失败了再补救</strong>：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token comment">// ✅ Codex 做法：直接尝试，错误变控制流</span>
+<span class="token keyword">match</span> sess<span class="token punctuation">.</span><span class="token function">steer_input</span><span class="token punctuation">(</span>items<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">Ok</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 成功：已在热路径 */</span> <span class="token punctuation">&#125;</span>
+    <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerInputError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>items<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 失败：转冷路径 */</span> <span class="token punctuation">&#125;</span>
+    <span class="token class-name">Err</span><span class="token punctuation">(</span>err<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span> <span class="token comment">/* 其它失败：报错 */</span> <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>SteerInputError</code> 的定义（session&#x2F;mod.rs L218–224）：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span> <span class="token keyword">enum</span> <span class="token type-definition class-name">SteerInputError</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span><span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">)</span><span class="token punctuation">,</span>                            <span class="token comment">// ← 携带原始输入</span>
+    <span class="token class-name">ExpectedTurnMismatch</span> <span class="token punctuation">&#123;</span> expected<span class="token punctuation">:</span> <span class="token class-name">String</span><span class="token punctuation">,</span> actual<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token class-name">ActiveTurnNotSteerable</span> <span class="token punctuation">&#123;</span> turn_kind<span class="token punctuation">:</span> <span class="token class-name">NonSteerableTurnKind</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token class-name">EmptyInput</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p><code>NoActiveTurn</code> 变体携带 <code>Vec&lt;UserInput&gt;</code>——这意味着失败不丢失数据。返回的 <code>Err</code> 中包含了可以无缝传给 <code>spawn_task</code> 的完整用户输入。这就是”错误即逻辑”（Error-as-Logic）模式：</p>
+<ul>
+<li><strong>不抛异常</strong>——用 Result 表达控制流</li>
+<li><strong>错误变体携带上下文</strong>——调用方不需要额外存储输入</li>
+<li><strong>一次锁操作完成判断+投递</strong>——消除了 check-then-act 竞态</li>
+</ul>
+<hr>
+<h2 id="八、跨语言对比"><a href="#八、跨语言对比" class="headerlink" title="八、跨语言对比"></a>八、跨语言对比</h2><p>同一套双轨调度逻辑，在不同语言生态中的实现难度差异显著：</p>
+<table>
+<thead>
+<tr>
+<th align="left">语言&#x2F;框架</th>
+<th align="left">等价实现</th>
+<th align="left">核心缺陷</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><strong>Python + AsyncIO</strong></td>
+<td align="left"><code>asyncio.Queue</code> + <code>asyncio.create_task</code></td>
+<td align="left">GIL 限制真正的并行工具调用；<code>active_turn</code> 状态无编译期保护，多协程可能同时写入</td>
+</tr>
+<tr>
+<td align="left"><strong>Go</strong></td>
+<td align="left"><code>goroutine</code> + <code>select</code> + <code>channel</code></td>
+<td align="left">无 affine type——<code>Mutex&lt;Option&lt;ActiveTurn&gt;&gt;</code> 在 Go 中靠 convention 保证不复制，无法在编译期发现误用</td>
+</tr>
+<tr>
+<td align="left"><strong>Node.js + TypeScript</strong></td>
+<td align="left"><code>EventEmitter</code> + 全局状态标志</td>
+<td align="left">单线程——但大文件 diff 或 Shell 命令的 stdout 解析会阻塞事件循环</td>
+</tr>
+<tr>
+<td align="left"><strong>Erlang &#x2F; Elixir</strong></td>
+<td align="left">GenServer + 信箱</td>
+<td align="left">Actor 模型原生支持消息注入，但缺乏 Tokio 的 CancellationToken 树取消能力</td>
+</tr>
+<tr>
+<td align="left"><strong>Rust (Codex)</strong></td>
+<td align="left">Actor + <code>Mutex&lt;Option&lt;ActiveTurn&gt;&gt;</code> + <code>pending_input</code></td>
+<td align="left">编译期所有权 + 零开销抽象，但学习曲线陡峭</td>
+</tr>
+</tbody></table>
+<p>Rust 的杀手级组合在于：<code>Mutex&lt;Option&lt;ActiveTurn&gt;&gt;</code> 的类型签名本身就是一份<strong>编译期强制执行的协议</strong>。你不会忘记加锁，不会忘记检查 <code>None</code>，不会在线程间传递没有 Send 的数据。这些在其他语言中需要靠代码规范和 code review 维持的纪律，在 Rust 中是编译器说了算。</p>
+<hr>
+<h2 id="九、实战：最小双轨引擎复刻"><a href="#九、实战：最小双轨引擎复刻" class="headerlink" title="九、实战：最小双轨引擎复刻"></a>九、实战：最小双轨引擎复刻</h2><p>下面用约 90 行 Rust 构建一个最小但结构完整的双轨引擎：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">use</span> <span class="token namespace">std<span class="token punctuation">::</span>sync<span class="token punctuation">::</span></span><span class="token class-name">Arc</span><span class="token punctuation">;</span>
+<span class="token keyword">use</span> <span class="token namespace">tokio<span class="token punctuation">::</span>sync<span class="token punctuation">::</span></span><span class="token class-name">Mutex</span><span class="token punctuation">;</span>
+
+<span class="token comment">// ──── 类型定义 ────</span>
+
+<span class="token attribute attr-name">#[derive(Clone, Debug, PartialEq)]</span>
+<span class="token keyword">enum</span> <span class="token type-definition class-name">TaskKind</span> <span class="token punctuation">&#123;</span> <span class="token class-name">Regular</span><span class="token punctuation">,</span> <span class="token class-name">Review</span><span class="token punctuation">,</span> <span class="token class-name">Compact</span> <span class="token punctuation">&#125;</span>
+
+<span class="token attribute attr-name">#[derive(Debug, Clone)]</span>
+<span class="token keyword">struct</span> <span class="token type-definition class-name">UserInput</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token class-name">String</span> <span class="token punctuation">&#125;</span>
+
+<span class="token attribute attr-name">#[derive(Debug)]</span>
+<span class="token keyword">enum</span> <span class="token type-definition class-name">SteerError</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span><span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token class-name">ActiveTurnNotSteerable</span> <span class="token punctuation">&#123;</span> turn_kind<span class="token punctuation">:</span> <span class="token class-name">TaskKind</span> <span class="token punctuation">&#125;</span><span class="token punctuation">,</span>
+    <span class="token class-name">EmptyInput</span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token attribute attr-name">#[derive(Default)]</span>
+<span class="token keyword">struct</span> <span class="token type-definition class-name">TurnState</span> <span class="token punctuation">&#123;</span>
+    pending_input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">,</span>
+    task_kind<span class="token punctuation">:</span> <span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">TaskKind</span><span class="token operator">></span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token keyword">struct</span> <span class="token type-definition class-name">Session</span> <span class="token punctuation">&#123;</span>
+    active_turn<span class="token punctuation">:</span> <span class="token class-name">Mutex</span><span class="token operator">&lt;</span><span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">TurnState</span><span class="token operator">>></span><span class="token punctuation">,</span>
+    turn_count<span class="token punctuation">:</span> <span class="token class-name">Mutex</span><span class="token operator">&lt;</span><span class="token keyword">u32</span><span class="token operator">></span><span class="token punctuation">,</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token keyword">impl</span> <span class="token class-name">Session</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">fn</span> <span class="token function-definition function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token keyword">Self</span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">Self</span> <span class="token punctuation">&#123;</span> active_turn<span class="token punctuation">:</span> <span class="token class-name">Mutex</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token class-name">None</span><span class="token punctuation">)</span><span class="token punctuation">,</span> turn_count<span class="token punctuation">:</span> <span class="token class-name">Mutex</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token number">0</span><span class="token punctuation">)</span> <span class="token punctuation">&#125;</span>
+    <span class="token punctuation">&#125;</span>
+
+    <span class="token comment">/// 热注入尝试：如果任务活跃且为 Regular，注入信箱；否则返回错误</span>
+    <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">steer_input</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">,</span> input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Result</span><span class="token operator">&lt;</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token class-name">SteerError</span><span class="token operator">></span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">if</span> input<span class="token punctuation">.</span><span class="token function">is_empty</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+            <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerError</span><span class="token punctuation">::</span><span class="token class-name">EmptyInput</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token punctuation">&#125;</span>
+        <span class="token keyword">let</span> <span class="token keyword">mut</span> active <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span>active_turn<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>state<span class="token punctuation">)</span> <span class="token operator">=</span> active<span class="token punctuation">.</span><span class="token function">as_mut</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span>
+            <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+        <span class="token keyword">match</span> state<span class="token punctuation">.</span>task_kind <span class="token punctuation">&#123;</span>
+            <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Regular</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span><span class="token punctuation">&#125;</span>
+            <span class="token class-name">Some</span><span class="token punctuation">(</span>kind<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerError</span><span class="token punctuation">::</span><span class="token class-name">ActiveTurnNotSteerable</span> <span class="token punctuation">&#123;</span> turn_kind<span class="token punctuation">:</span> kind <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+            <span class="token class-name">None</span> <span class="token operator">=></span> <span class="token keyword">return</span> <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        <span class="token punctuation">&#125;</span>
+        state<span class="token punctuation">.</span>pending_input<span class="token punctuation">.</span><span class="token function">extend</span><span class="token punctuation">(</span>input<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token class-name">Ok</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+    <span class="token punctuation">&#125;</span>
+
+    <span class="token comment">/// 冷启动：注册活跃任务，开启 loop</span>
+    <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">spawn_task</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">,</span> input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+        <span class="token operator">*</span><span class="token keyword">self</span><span class="token punctuation">.</span>active_turn<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token operator">=</span> <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token class-name">TurnState</span> <span class="token punctuation">&#123;</span>
+            task_kind<span class="token punctuation">:</span> <span class="token class-name">Some</span><span class="token punctuation">(</span><span class="token class-name">TaskKind</span><span class="token punctuation">::</span><span class="token class-name">Regular</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+            pending_input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> <span class="token keyword">mut</span> count <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span>turn_count<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token operator">*</span>count <span class="token operator">+=</span> <span class="token number">1</span><span class="token punctuation">;</span>
+        <span class="token keyword">let</span> round <span class="token operator">=</span> <span class="token operator">*</span>count<span class="token punctuation">;</span>
+        <span class="token macro property">println!</span><span class="token punctuation">(</span><span class="token string">"[Turn &#123;&#125;] 冷启动，初始输入: &#123;:?&#125;"</span><span class="token punctuation">,</span> round<span class="token punctuation">,</span> input<span class="token punctuation">)</span><span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+
+    <span class="token comment">/// 模拟 RegularTask 的一轮</span>
+    <span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">run_turn_cycle</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">self</span><span class="token punctuation">,</span> round<span class="token punctuation">:</span> <span class="token keyword">u32</span><span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token keyword">bool</span> <span class="token punctuation">&#123;</span>
+        <span class="token keyword">let</span> pending <span class="token operator">=</span> <span class="token punctuation">&#123;</span>
+            <span class="token keyword">let</span> <span class="token keyword">mut</span> active <span class="token operator">=</span> <span class="token keyword">self</span><span class="token punctuation">.</span>active_turn<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+            <span class="token keyword">let</span> <span class="token class-name">Some</span><span class="token punctuation">(</span>state<span class="token punctuation">)</span> <span class="token operator">=</span> active<span class="token punctuation">.</span><span class="token function">as_mut</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token keyword">else</span> <span class="token punctuation">&#123;</span> <span class="token keyword">return</span> <span class="token boolean">false</span> <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+            <span class="token namespace">std<span class="token punctuation">::</span>mem<span class="token punctuation">::</span></span><span class="token function">take</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token keyword">mut</span> state<span class="token punctuation">.</span>pending_input<span class="token punctuation">)</span>
+        <span class="token punctuation">&#125;</span><span class="token punctuation">;</span>
+        <span class="token keyword">if</span> pending<span class="token punctuation">.</span><span class="token function">is_empty</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+            <span class="token macro property">println!</span><span class="token punctuation">(</span><span class="token string">"[Turn &#123;&#125;] 信箱为空，退出"</span><span class="token punctuation">,</span> round<span class="token punctuation">)</span><span class="token punctuation">;</span>
+            <span class="token operator">*</span><span class="token keyword">self</span><span class="token punctuation">.</span>active_turn<span class="token punctuation">.</span><span class="token function">lock</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token operator">=</span> <span class="token class-name">None</span><span class="token punctuation">;</span>
+            <span class="token keyword">return</span> <span class="token boolean">false</span><span class="token punctuation">;</span>
+        <span class="token punctuation">&#125;</span>
+        <span class="token macro property">println!</span><span class="token punctuation">(</span><span class="token string">"[Turn &#123;&#125;] 消费信箱: &#123;:?&#125;"</span><span class="token punctuation">,</span> round<span class="token punctuation">,</span> pending<span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token boolean">true</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token comment">/// 核心调度</span>
+<span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">dispatch</span><span class="token punctuation">(</span>sess<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">Arc</span><span class="token operator">&lt;</span><span class="token class-name">Session</span><span class="token operator">></span><span class="token punctuation">,</span> input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">UserInput</span><span class="token operator">></span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">match</span> sess<span class="token punctuation">.</span><span class="token function">steer_input</span><span class="token punctuation">(</span>input<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+        <span class="token class-name">Ok</span><span class="token punctuation">(</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token macro property">println!</span><span class="token punctuation">(</span><span class="token string">"▸ 热注入：已投递到活跃 Turn 的信箱"</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        <span class="token class-name">Err</span><span class="token punctuation">(</span><span class="token class-name">SteerError</span><span class="token punctuation">::</span><span class="token class-name">NoActiveTurn</span><span class="token punctuation">(</span>items<span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+            <span class="token macro property">println!</span><span class="token punctuation">(</span><span class="token string">"▸ 冷启动：无活跃任务，发起新 Turn"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+            sess<span class="token punctuation">.</span><span class="token function">spawn_task</span><span class="token punctuation">(</span>items<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+        <span class="token punctuation">&#125;</span>
+        <span class="token class-name">Err</span><span class="token punctuation">(</span>e<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token macro property">println!</span><span class="token punctuation">(</span><span class="token string">"▸ 错误: &#123;:?&#125;"</span><span class="token punctuation">,</span> e<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span>
+
+<span class="token attribute attr-name">#[tokio::main]</span>
+<span class="token keyword">async</span> <span class="token keyword">fn</span> <span class="token function-definition function">main</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">let</span> sess <span class="token operator">=</span> <span class="token class-name">Arc</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token class-name">Session</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+    <span class="token comment">// 场景1：冷启动——AI 空闲</span>
+    <span class="token function">dispatch</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> <span class="token macro property">vec!</span><span class="token punctuation">[</span><span class="token class-name">UserInput</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token string">"排查 API 偶发超时"</span><span class="token punctuation">.</span><span class="token function">into</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#125;</span><span class="token punctuation">]</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+
+    <span class="token comment">// 场景2：热注入——AI 正在排查中，用户补充信息</span>
+    <span class="token function">dispatch</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> <span class="token macro property">vec!</span><span class="token punctuation">[</span><span class="token class-name">UserInput</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token string">"查一下数据库连接池配置"</span><span class="token punctuation">.</span><span class="token function">into</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#125;</span><span class="token punctuation">]</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+
+    <span class="token comment">// 模拟 RegularTask 循环消费</span>
+    sess<span class="token punctuation">.</span><span class="token function">run_turn_cycle</span><span class="token punctuation">(</span><span class="token number">1</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+    sess<span class="token punctuation">.</span><span class="token function">run_turn_cycle</span><span class="token punctuation">(</span><span class="token number">1</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span> <span class="token comment">// 第二圈消费热注入的输入</span>
+
+    <span class="token comment">// 场景3：再次冷启动——上一个 Turn 已结束</span>
+    <span class="token function">dispatch</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> <span class="token macro property">vec!</span><span class="token punctuation">[</span><span class="token class-name">UserInput</span> <span class="token punctuation">&#123;</span> content<span class="token punctuation">:</span> <span class="token string">"检查 Redis 缓存超时设置"</span><span class="token punctuation">.</span><span class="token function">into</span><span class="token punctuation">(</span><span class="token punctuation">)</span> <span class="token punctuation">&#125;</span><span class="token punctuation">]</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+    sess<span class="token punctuation">.</span><span class="token function">run_turn_cycle</span><span class="token punctuation">(</span><span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<h3 id="关键设计点"><a href="#关键设计点" class="headerlink" title="关键设计点"></a>关键设计点</h3><ol>
+<li><strong><code>Mutex&lt;Option&lt;TurnState&gt;&gt;</code></strong>：<code>Option</code> 直接编码了”是否有活跃任务”的状态——不需要额外的 <code>bool</code> 标志。</li>
+<li><strong>Error-as-Logic</strong>：<code>steer_input</code> 返回 <code>Result</code>，<code>Err(NoActiveTurn(items))</code> 携带原始输入，无损转为 <code>spawn_task</code> 参数。</li>
+<li><strong><code>std::mem::take</code></strong>：在消费信箱时用 swap 替代 clone，零拷贝且保持锁持有时间最短。</li>
+<li><strong>Task 生命周期</strong>：一个 Turn 可以执行多个 cycle（只要信箱有货），模拟了真实 RegularTask 的 loop 行为。</li>
+</ol>
+<hr>
+<h2 id="十、总结：三条核心原则"><a href="#十、总结：三条核心原则" class="headerlink" title="十、总结：三条核心原则"></a>十、总结：三条核心原则</h2><p>回顾 Codex 双轨调度架构的精髓：</p>
+<p><strong>1. 错误即逻辑</strong> —— <code>steer_input</code> 失败不是异常，是控制流信息。<code>NoActiveTurn</code> 携带原始输入，无缝衔接冷启动。这消除了”先检查再操作”的竞态窗口。</p>
+<p><strong>2. 类型守卫</strong> —— <code>TaskKind</code> 的 match 穷尽检查，让编译器保证”不会漏掉对新任务类型的干预权限决策”。Review&#x2F;Compact 的不允许干预不是注释里写的约定，是编译期强制执行的规则。</p>
+<p><strong>3. 邮箱解耦</strong> —— <code>TurnState.pending_input</code> 让用户输入的生产和消费完全异步。生产者只需 push，消费者在 loop 中自然检查。加上 <code>MailboxDeliveryPhase</code> 状态机，子 Agent 间的通信也被纳入同一套调度体系。</p>
+<p>从用户敲下回车到 AI 做出响应，Codex 没有走”收到请求→创建线程→执行→返回”的简单路径。它问了一个更聪明的问题：<strong>这个意图是应该注入正在燃烧的火焰，还是点燃一根新的火柴？</strong></p>
+<hr>
+<p><em>延伸阅读推荐</em>：</p>
+<ul>
+<li><a target="_blank" rel="noopener" href="https://github.com/openai/codex">Codex 源码</a>：<code>codex-rs/core/src/session/handlers.rs</code> 的 <code>user_input_or_turn_inner</code> 是核心入口。</li>
+<li><a target="_blank" rel="noopener" href="https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html"><code>tokio::sync::Mutex</code> 文档</a>：理解异步 Mutex 与标准库 <code>std::sync::Mutex</code> 的区别。</li>
+<li><a target="_blank" rel="noopener" href="https://dl.acm.org/doi/10.1145/359763.359803">Actor 模型论文</a>（Carl Hewitt, 1973）：Actor 模型的原始论文，理解为什么 Erlang&#x2F;Codex 选择消息传递而非共享内存。</li>
+</ul>
+
+                
+              </div>
+            
+            <hr/>
+            <div>
+              <div class="post-metas my-3">
+  
+    <div class="post-meta mr-3 d-flex align-items-center">
+      <i class="iconfont icon-category"></i>
+      
+
+<span class="category-chains">
+  
+  
+    
+      <span class="category-chain">
+        
+  <a href="/categories/%E6%8A%80%E6%9C%AF%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90/" class="category-chain-item">技术深度解析</a>
+  
+  
+    <span>></span>
+    
+  <a href="/categories/%E6%8A%80%E6%9C%AF%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" class="category-chain-item">架构设计</a>
+  
+  
+
+  
+
+      </span>
+    
+  
+</span>
+
+    </div>
+  
+  
+    <div class="post-meta">
+      <i class="iconfont icon-tags"></i>
+      
+        <a href="/tags/Codex/" class="print-no-link">#Codex</a>
+      
+        <a href="/tags/AI-Agent/" class="print-no-link">#AI Agent</a>
+      
+        <a href="/tags/Rust/" class="print-no-link">#Rust</a>
+      
+        <a href="/tags/Tokio/" class="print-no-link">#Tokio</a>
+      
+        <a href="/tags/Actor-%E6%A8%A1%E5%BC%8F/" class="print-no-link">#Actor 模式</a>
+      
+        <a href="/tags/%E5%BC%82%E6%AD%A5%E8%B0%83%E5%BA%A6/" class="print-no-link">#异步调度</a>
+      
+    </div>
+  
+</div>
+
+
+              
+  
+
+  <div class="license-box my-3">
+    <div class="license-title">
+      <div>Codex 双轨制任务驱动架构：从 steer_input 到 spawn_task 的深度解析</div>
+      <div>http://example.com/2026/05/04/Codex-双轨制任务驱动架构-从-steer-input-到-spawn-task-的深度解析/</div>
+    </div>
+    <div class="license-meta">
+      
+        <div class="license-meta-item">
+          <div>作者</div>
+          <div>sakiko-toyokawa</div>
+        </div>
+      
+      
+        <div class="license-meta-item license-meta-date">
+          <div>发布于</div>
+          <div>2026年5月4日</div>
+        </div>
+      
+      
+      
+        <div class="license-meta-item">
+          <div>许可协议</div>
+          <div>
+            
+              
+              
+                <a class="print-no-link" target="_blank" href="https://creativecommons.org/licenses/by/4.0/">
+                  <span class="hint--top hint--rounded" aria-label="BY - 署名">
+                    <i class="iconfont icon-cc-by"></i>
+                  </span>
+                </a>
+              
+            
+          </div>
+        </div>
+      
+    </div>
+    <div class="license-icon iconfont"></div>
+  </div>
+
+
+
+              
+                <div class="post-prevnext my-3">
+                  <article class="post-prev col-6">
+                    
+                    
+                  </article>
+                  <article class="post-next col-6">
+                    
+                    
+                      <a href="/2026/05/03/Codex-%E5%BC%82%E6%AD%A5%E5%86%85%E6%A0%B8%E8%A7%A3%E6%9E%84-%E4%BB%8E-Session-%E5%B0%81%E8%A3%85%E9%93%BE%E5%88%B0-submission-loop-%E7%9A%84%E5%B7%A5%E4%B8%9A%E7%BA%A7%E5%AE%9E%E8%B7%B5/" title="Codex 异步内核解构：从 Session 封装链到 submission_loop 的工业级实践">
+                        <span class="hidden-mobile">Codex 异步内核解构：从 Session 封装链到 submission_loop 的工业级实践</span>
+                        <span class="visible-mobile">下一篇</span>
+                        <i class="iconfont icon-arrowright"></i>
+                      </a>
+                    
+                  </article>
+                </div>
+              
+            </div>
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-col d-none d-lg-block col-lg-2">
+      
+  <aside class="sidebar" style="margin-left: -1rem">
+    <div id="toc">
+  <p class="toc-header">
+    <i class="iconfont icon-list"></i>
+    <span>目录</span>
+  </p>
+  <div class="toc-body" id="toc-body"></div>
+</div>
+
+
+
+  </aside>
+
+
+    </div>
+  </div>
+</div>
+
+
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  <script>
+  Fluid.utils.createScript('https://lib.baomitu.com/mermaid/10.9.0/mermaid.min.js', function() {
+    mermaid.initialize({"theme":"default"});
+
+    Fluid.utils.listenDOMLoaded(function() {
+      Fluid.events.registerRefreshCallback(function() {
+        if ('mermaid' in window) {
+          mermaid.init();
+        }
+      });
+    });
+  });
+
+  // 点击放大 mermaid 图表
+  (function() {
+    var style = document.createElement('style');
+    style.textContent = '.mermaid svg { cursor: zoom-in; } .mermaid svg:hover { opacity: 0.85; }';
+    document.head.appendChild(style);
+
+    document.body.addEventListener('click', function(e) {
+      var svg = e.target.closest('.mermaid svg');
+      if (!svg) return;
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+      var clone = svg.cloneNode(true);
+      clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;background:#fff;border-radius:4px;padding:12px';
+      clone.title = '点击关闭';
+      overlay.appendChild(clone);
+      overlay.addEventListener('click', function() { overlay.remove(); });
+      document.body.appendChild(overlay);
+    });
+  })();
+</script>
+
+
+
+
+
+
+    
+
+    
+      <a id="scroll-top-button" aria-label="TOP" href="#" role="button">
+        <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+      </a>
+    
+
+    
+      <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel"
+     aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">搜索</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">关键词</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+    
+
+    
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+  
+    <div class="footer-content">
+       <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a> <i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a> 
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+
+  <!-- Scripts -->
+  
+  <script  src="https://lib.baomitu.com/nprogress/0.2.0/nprogress.min.js" ></script>
+  <link  rel="stylesheet" href="https://lib.baomitu.com/nprogress/0.2.0/nprogress.min.css" />
+
+  <script>
+    NProgress.configure({"showSpinner":false,"trickleSpeed":100})
+    NProgress.start()
+    window.addEventListener('load', function() {
+      NProgress.done();
+    })
+  </script>
+
+
+<script  src="https://lib.baomitu.com/jquery/3.6.4/jquery.min.js" ></script>
+<script  src="https://lib.baomitu.com/twitter-bootstrap/4.6.1/js/bootstrap.min.js" ></script>
+<script  src="/js/events.js" ></script>
+<script  src="/js/plugins.js" ></script>
+
+
+  <script  src="https://lib.baomitu.com/typed.js/2.0.12/typed.min.js" ></script>
+  <script>
+    (function (window, document) {
+      var typing = Fluid.plugins.typing;
+      var subtitle = document.getElementById('subtitle');
+      if (!subtitle || !typing) {
+        return;
+      }
+      var text = subtitle.getAttribute('data-typed-text');
+      
+        typing(text);
+      
+    })(window, document);
+  </script>
+
+
+
+
+  
+    <script  src="/js/img-lazyload.js" ></script>
+  
+
+
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/tocbot/4.20.1/tocbot.min.js', function() {
+    var toc = jQuery('#toc');
+    if (toc.length === 0 || !window.tocbot) { return; }
+    var boardCtn = jQuery('#board-ctn');
+    var boardTop = boardCtn.offset().top;
+
+    function isExpandAllEnabled() {
+      return CONFIG.toc && CONFIG.toc.expand_all === true;
+    }
+    function expandAllToc() {
+      if (!isExpandAllEnabled()) { return; }
+      jQuery('#toc-body .tocbot-is-collapsed').removeClass('tocbot-is-collapsed');
+    }
+    function updateTocToggle($li, $childList) {
+      var $toggle = $li.children('.toc-toggle');
+      if ($toggle.length === 0) { return; }
+      var collapsed = $childList.hasClass('tocbot-is-collapsed');
+      $toggle
+        .toggleClass('toc-toggle-collapsed', collapsed)
+        .toggleClass('toc-toggle-expanded', !collapsed);
+    }
+    function bindTocToggle() {
+      if (!isExpandAllEnabled()) { return; }
+      jQuery('#toc-body .toc-list-item').each(function() {
+        var $li = jQuery(this);
+        var $childList = $li.children('ol');
+        if ($childList.length === 0) {
+          if ($li.children('.toc-toggle').length === 0) {
+            $li.prepend('<span class="toc-toggle toc-toggle-placeholder" aria-hidden="true">›</span>');
+          }
+          return;
+        }
+
+        if ($li.children('.toc-toggle').length === 0) {
+          $li.prepend('<span class="toc-toggle toc-toggle-expanded" aria-hidden="true">›</span>');
+        }
+        updateTocToggle($li, $childList);
+      });
+      jQuery('#toc-body').off('click.tocToggle').on('click.tocToggle', '.toc-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var $li = jQuery(this).parent('.toc-list-item');
+        var $childList = $li.children('ol');
+        if ($childList.length === 0) { return; }
+        $childList.toggleClass('tocbot-is-collapsed');
+        updateTocToggle($li, $childList);
+      });
+      if (!window.__tocToggleObserver) {
+        window.__tocToggleObserver = new MutationObserver(function(mutations) {
+          mutations.forEach(function(mutation) {
+            if (mutation.type !== 'attributes' || mutation.attributeName !== 'class') { return; }
+            var $list = jQuery(mutation.target);
+            var $li = $list.parent('.toc-list-item');
+            if ($li.length === 0) { return; }
+            updateTocToggle($li, $list);
+          });
+        });
+        jQuery('#toc-body ol').each(function() {
+          window.__tocToggleObserver.observe(this, { attributes: true });
+        });
+      }
+    }
+    var tocConfig = Object.assign({
+      tocSelector     : '#toc-body',
+      contentSelector : '.markdown-body',
+      linkClass       : 'tocbot-link',
+      activeLinkClass : 'tocbot-active-link',
+      listClass       : 'tocbot-list',
+      isCollapsedClass: 'tocbot-is-collapsed',
+      collapsibleClass: 'tocbot-is-collapsible',
+      scrollSmooth    : true,
+      includeTitleTags: true,
+      headingsOffset  : -boardTop,
+    }, CONFIG.toc);
+    if (isExpandAllEnabled()) {
+      tocConfig.collapseDepth = 6;
+    }
+    window.tocbot.init(tocConfig);
+    if (toc.find('.toc-list-item').length > 0) {
+      toc.css('visibility', 'visible');
+    }
+    expandAllToc();
+    bindTocToggle();
+
+    Fluid.events.registerRefreshCallback(function() {
+      if ('tocbot' in window) {
+        tocbot.refresh();
+        var toc = jQuery('#toc');
+        if (toc.length === 0 || !tocbot) {
+          return;
+        }
+        if (toc.find('.toc-list-item').length > 0) {
+          toc.css('visibility', 'visible');
+        }
+        expandAllToc();
+        bindTocToggle();
+      }
+    });
+  });
+</script>
+
+
+  <script  src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js" ></script>
+
+  <script src=https://lib.baomitu.com/clipboard.js/2.0.11/clipboard.min.js></script>
+
+  <script>Fluid.plugins.codeWidget();</script>
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/anchor-js/5.0.0/anchor.min.js', function() {
+    window.anchors.options = {
+      placement: CONFIG.anchorjs.placement,
+      visible  : CONFIG.anchorjs.visible
+    };
+    if (CONFIG.anchorjs.icon) {
+      window.anchors.options.icon = CONFIG.anchorjs.icon;
+    }
+    var el = (CONFIG.anchorjs.element || 'h1,h2,h3,h4,h5,h6').split(',');
+    var res = [];
+    for (var item of el) {
+      res.push('.markdown-body > ' + item.trim());
+    }
+    if (CONFIG.anchorjs.placement === 'left') {
+      window.anchors.options.class = 'anchorjs-link-left';
+    }
+    window.anchors.add(res.join(', '));
+
+    Fluid.events.registerRefreshCallback(function() {
+      if ('anchors' in window) {
+        anchors.removeAll();
+        var el = (CONFIG.anchorjs.element || 'h1,h2,h3,h4,h5,h6').split(',');
+        var res = [];
+        for (var item of el) {
+          res.push('.markdown-body > ' + item.trim());
+        }
+        if (CONFIG.anchorjs.placement === 'left') {
+          anchors.options.class = 'anchorjs-link-left';
+        }
+        anchors.add(res.join(', '));
+      }
+    });
+  });
+</script>
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/fancybox/3.5.7/jquery.fancybox.min.js', function() {
+    Fluid.plugins.fancyBox();
+  });
+</script>
+
+
+  <script>Fluid.plugins.imageCaption();</script>
+
+  <script  src="/js/local-search.js" ></script>
+
+
+
+
+
+<!-- 主题的启动项，将它保持在最底部 -->
+<!-- the boot of the theme, keep it at the bottom -->
+<script  src="/js/boot.js" ></script>
+
+
+  
+
+  <noscript>
+    <div class="noscript-warning">博客在允许 JavaScript 运行的环境下浏览效果更佳</div>
+  </noscript>
+</body>
+</html>
