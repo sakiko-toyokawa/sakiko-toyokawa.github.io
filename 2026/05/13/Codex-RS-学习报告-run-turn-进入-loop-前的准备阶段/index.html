@@ -1,0 +1,1147 @@
+
+
+<!DOCTYPE html>
+<html lang="zh-CN" data-default-color-scheme=auto>
+
+
+
+<head>
+  <meta charset="UTF-8">
+
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/fluid.png">
+  <link rel="icon" href="/img/fluid.png">
+  
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#1a1a1a">
+  <meta name="author" content="sakiko-toyokawa">
+  <meta name="keywords" content="">
+  
+    <meta name="description" content="深入分析 Codex-RS 中 run_turn() 在进入采样 loop 之前完成的整套准备机制，包括 TurnContext 冻结、pre-sampling compact、上下文注入、skill&#x2F;plugin 解析与注入、hook 执行等关键步骤。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Codex-RS 学习报告：run_turn() 进入 loop 前的准备阶段">
+<meta property="og:url" content="http://example.com/2026/05/13/Codex-RS-%E5%AD%A6%E4%B9%A0%E6%8A%A5%E5%91%8A-run-turn-%E8%BF%9B%E5%85%A5-loop-%E5%89%8D%E7%9A%84%E5%87%86%E5%A4%87%E9%98%B6%E6%AE%B5/index.html">
+<meta property="og:site_name" content="瑞希哥的博客">
+<meta property="og:description" content="深入分析 Codex-RS 中 run_turn() 在进入采样 loop 之前完成的整套准备机制，包括 TurnContext 冻结、pre-sampling compact、上下文注入、skill&#x2F;plugin 解析与注入、hook 执行等关键步骤。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2026-05-13T02:00:00.000Z">
+<meta property="article:modified_time" content="2026-05-13T15:32:26.271Z">
+<meta property="article:author" content="sakiko-toyokawa">
+<meta property="article:tag" content="AI Agent">
+<meta property="article:tag" content="Codex-RS">
+<meta property="article:tag" content="Rust">
+<meta property="article:tag" content="run_turn">
+<meta property="article:tag" content="上下文管理">
+<meta property="article:tag" content="架构设计">
+<meta property="article:tag" content="源码分析">
+<meta name="twitter:card" content="summary_large_image">
+  
+  
+  
+    <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css" rel="stylesheet">
+  
+  <title>Codex-RS 学习报告：run_turn() 进入 loop 前的准备阶段 - 瑞希哥的博客</title>
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/twitter-bootstrap/4.6.1/css/bootstrap.min.css" />
+
+
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/github-markdown-css/4.0.0/github-markdown.min.css" />
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/hint.css/2.7.0/hint.min.css" />
+
+  <link  rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css" />
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/fancybox/3.5.7/jquery.fancybox.min.css" />
+
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+<!-- Do not modify the link that theme dependent icons -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/c/font_1749284_5i9bdhy70f8.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/c/font_1736178_k526ubmyhba.css">
+
+
+<link  rel="stylesheet" href="/css/main.css" />
+
+
+  <link id="highlight-css" rel="stylesheet" href="/css/highlight.css" />
+  
+    <link id="highlight-css-dark" rel="stylesheet" href="/css/highlight-dark.css" />
+  
+
+
+
+  
+<link rel="stylesheet" href="/css/editorial.css">
+
+
+
+  <script id="fluid-configs">
+    var Fluid = window.Fluid || {};
+    Fluid.ctx = Object.assign({}, Fluid.ctx)
+    var CONFIG = {"hostname":"example.com","root":"/","version":"1.9.9","typing":{"enable":true,"typeSpeed":70,"cursorChar":"_","loop":false,"scope":[]},"anchorjs":{"enable":true,"element":"h1,h2,h3,h4,h5,h6","placement":"left","visible":"hover","icon":""},"progressbar":{"enable":true,"height_px":3,"color":"#29d","options":{"showSpinner":false,"trickleSpeed":100}},"code_language":{"enable":true,"default":"TEXT"},"copy_btn":true,"image_caption":{"enable":true},"image_zoom":{"enable":true,"img_url_replace":["",""]},"toc":{"enable":true,"expand_all":true,"placement":"right","headingSelector":"h1,h2,h3,h4,h5,h6","collapseDepth":0},"lazyload":{"enable":true,"loading_img":"/img/loading.gif","onlypost":false,"offset_factor":2},"web_analytics":{"enable":false,"follow_dnt":true,"baidu":null,"google":{"measurement_id":null},"tencent":{"sid":null,"cid":null},"leancloud":{"app_id":null,"app_key":null,"server_url":null,"path":"window.location.pathname","ignore_local":false},"openkounter":{"server_url":"https://open-kounter.mintimate.cn","path":"window.location.pathname","ignore_local":false},"umami":{"src":null,"website_id":null,"domains":null,"start_time":"2024-01-01T00:00:00.000Z","token":null,"api_server":null}},"search_path":"/local-search.xml","include_content_in_search":true};
+
+    if (CONFIG.web_analytics.follow_dnt) {
+      var dntVal = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
+      Fluid.ctx.dnt = dntVal && (dntVal.startsWith('1') || dntVal.startsWith('yes') || dntVal.startsWith('on'));
+    }
+  </script>
+  <script  src="/js/utils.js" ></script>
+  <script  src="/js/color-schema.js" ></script>
+  
+
+
+  
+<meta name="generator" content="Hexo 8.1.1"></head>
+
+
+<body>
+  
+
+  <header>
+    
+
+<div class="header-inner" style="height: 70vh;">
+  <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">
+      <strong>瑞希哥的博客</strong>
+    </a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse"
+            data-target="#navbarSupportedContent"
+            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content (desktop) -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/" target="_self">
+                <i class="iconfont icon-home-fill"></i>
+                <span>首页</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/" target="_self">
+                <i class="iconfont icon-archive-fill"></i>
+                <span>归档</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/" target="_self">
+                <i class="iconfont icon-category-fill"></i>
+                <span>分类</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/" target="_self">
+                <i class="iconfont icon-tags-fill"></i>
+                <span>标签</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/" target="_self">
+                <i class="iconfont icon-user-fill"></i>
+                <span>关于</span>
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" target="_self" href="javascript:;" data-toggle="modal" data-target="#modalSearch" aria-label="Search">
+              <i class="iconfont icon-search"></i>
+            </a>
+          </li>
+          
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" target="_self" href="javascript:;" aria-label="Color Toggle">
+              <i class="iconfont icon-dark" id="color-toggle-icon"></i>
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<!-- Mobile grid menu overlay -->
+<div id="mobile-grid-menu" class="d-lg-none">
+  <div class="mobile-grid-menu-inner">
+    <div class="container">
+      <div class="row">
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-home-fill"></i>
+                  <span>首页</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/archives/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-archive-fill"></i>
+                  <span>归档</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/categories/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-category-fill"></i>
+                  <span>分类</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/tags/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-tags-fill"></i>
+                  <span>标签</span>
+                </div>
+              </a>
+            </div>
+          
+        
+          
+          
+          
+          
+            <div class="col-4 mobile-grid-cell">
+              <a href="/about/" target="_self">
+                <div class="mobile-grid-item">
+                  <i class="iconfont icon-user-fill"></i>
+                  <span>关于</span>
+                </div>
+              </a>
+            </div>
+          
+        
+        
+          <div class="col-4 mobile-grid-cell" id="mobile-search-btn">
+            <a href="javascript:;" data-toggle="modal" data-target="#modalSearch" aria-label="Search">
+              <div class="mobile-grid-item">
+                <i class="iconfont icon-search"></i>
+                <span>搜索</span>
+              </div>
+            </a>
+          </div>
+        
+        
+          <div class="col-4 mobile-grid-cell" id="mobile-color-toggle-btn"
+               data-label-light="开灯"
+               data-label-dark="关灯">
+            <a href="javascript:;" aria-label="Color Toggle">
+              <div class="mobile-grid-item">
+                <i class="iconfont icon-dark" id="mobile-color-toggle-icon"></i>
+                <span id="mobile-color-toggle-label">关灯</span>
+              </div>
+            </a>
+          </div>
+        
+      </div>
+    </div>
+  </div>
+</div>
+
+  
+
+<div id="banner" class="banner" parallax=true
+     style="background: url('/img/default.png') no-repeat center center; background-size: cover;">
+  <div class="full-bg-img">
+    <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+      <div class="banner-text text-center fade-in-up">
+        <div class="h2">
+          
+            <span id="subtitle" data-typed-text="Codex-RS 学习报告：run_turn() 进入 loop 前的准备阶段"></span>
+          
+        </div>
+
+        
+          
+  <div class="mt-3">
+    
+    
+      <span class="post-meta">
+        <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+        <time datetime="2026-05-13 10:00" pubdate>
+          2026年5月13日 上午
+        </time>
+      </span>
+    
+  </div>
+
+  <div class="mt-1">
+    
+      <span class="post-meta mr-2">
+        <i class="iconfont icon-chart"></i>
+        
+          14k 字
+        
+      </span>
+    
+
+    
+      <span class="post-meta mr-2">
+        <i class="iconfont icon-clock-fill"></i>
+        
+        
+        
+          120 分钟
+        
+      </span>
+    
+
+    
+    
+  </div>
+
+
+        
+      </div>
+
+      
+    </div>
+  </div>
+</div>
+
+
+
+</div>
+
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid nopadding-x">
+  <div class="row nomargin-x">
+    <div class="side-col d-none d-lg-block col-lg-2">
+      
+
+    </div>
+
+    <div class="col-lg-8 nopadding-x-md">
+      <div class="container nopadding-x-md" id="board-ctn">
+        <div id="board">
+          <article class="post-content mx-auto">
+            <h1 id="seo-header">Codex-RS 学习报告：run_turn() 进入 loop 前的准备阶段</h1>
+            
+            
+              <div class="markdown-body">
+                
+                <h1 id="Codex-RS-学习报告：run-turn-进入-loop-前的准备阶段"><a href="#Codex-RS-学习报告：run-turn-进入-loop-前的准备阶段" class="headerlink" title="Codex-RS 学习报告：run_turn() 进入 loop 前的准备阶段"></a>Codex-RS 学习报告：<code>run_turn()</code> 进入 loop 前的准备阶段</h1><h2 id="一、为什么要单独研究”准备阶段”"><a href="#一、为什么要单独研究”准备阶段”" class="headerlink" title="一、为什么要单独研究”准备阶段”"></a>一、为什么要单独研究”准备阶段”</h2><p>在 <code>codex-rs</code> 里，<code>run_turn()</code> 是最核心的一条执行链。它负责把”一次用户输入”真正变成”一轮模型交互”，并在需要时继续驱动工具调用、收集工具结果、再把这些结果送回模型，直到本轮对话结束。从外部看，这像是一次完整问答；但从内部看，它更像一个小型状态机：先确定上下文，再准备运行条件，再进入采样循环，最后再收束结果。</p>
+<p>很多人第一次读 <code>run_turn()</code> 时，容易把注意力放在后面的 loop 上，因为那里有模型流式输出、工具调用、重试、错误恢复这些最显眼的逻辑。但如果只盯着 loop，会产生一个错觉：好像用户一发消息，系统就立刻开始向模型采样。实际上并不是。真正的 <code>run_turn()</code> 在进入 loop 之前，已经做了大量”让模型这次能正确工作”的准备，这些准备既决定了模型能看到什么，也决定了它不能看到什么；既影响 token 成本，也影响权限边界；既关系到性能，也关系到安全。</p>
+<p>因此，本文不讨论整个 <code>run_turn()</code> 的所有细节，而是聚焦一个更窄、但也更关键的问题：<strong>在正式进入采样 loop 之前，Codex-RS 到底做了哪些准备工作，它们为什么必须在前面完成？</strong></p>
+<p>如果把 <code>run_turn()</code> 比作一次正式发车，那么 loop 相当于列车开始运行，而本文要分析的是列车发车前的站台调度：线路有没有锁定、乘客有没有上车、行李有没有安检、车厢内的广播是否准备好、司机能看到的仪表盘是否完整。这些步骤看上去不如”开车”本身热闹，但它们才决定了这趟车能不能稳定、安全、低成本地跑起来。</p>
+<p>从源码位置看，本文讨论的主战场主要在：</p>
+<ul>
+<li><code>core/src/session/turn.rs</code></li>
+<li><code>core/src/session/turn_context.rs</code></li>
+<li><code>core/src/session/mod.rs</code></li>
+<li><code>core-skills/src/injection.rs</code></li>
+<li><code>core/src/plugins/injection.rs</code></li>
+</ul>
+<p>这些文件共同完成了 turn 级配置冻结、上下文压缩、上下文注入、skill&#x2F;plugin 解析与注入、hook 执行、用户输入落库，以及进入 loop 前的运行态初始化。</p>
+<p>为了把这段代码讲清楚，本文采用”按真实调用链展开”的方式，而不是抽象成一套脱离源码的架构图。因为 <code>codex-rs</code> 的准备阶段不是几个并列模块简单拼接，而是一条前后有严格顺序的流水线：前一步的输出，往往正是后一步的输入。</p>
+<hr>
+<h2 id="二、准备阶段的起点：TurnContext-其实在-run-turn-之前就已经生成"><a href="#二、准备阶段的起点：TurnContext-其实在-run-turn-之前就已经生成" class="headerlink" title="二、准备阶段的起点：TurnContext 其实在 run_turn() 之前就已经生成"></a>二、准备阶段的起点：<code>TurnContext</code> 其实在 <code>run_turn()</code> 之前就已经生成</h2><p>研究 <code>run_turn()</code> 之前，必须先澄清一个常见误解：<strong>本轮 turn 的配置快照，并不是在 <code>run_turn()</code> 里面现算出来的，而是在 <code>run_turn()</code> 被调用之前，就已经由 <code>TurnContext</code> 固定下来了。</strong></p>
+<p>这件事非常重要，因为后面整个准备阶段都依赖这个前提：<code>run_turn()</code> 不是临时从 Session 的全局状态里”边读边取”配置，而是接收一个已经构建完毕、在本轮生命周期内应当视为稳定不变的 <code>TurnContext</code>。</p>
+<p>调用链大致是这样的：</p>
+<ol>
+<li>外层提交用户输入。</li>
+<li>Session 根据当前配置和这次更新，生成新的 turn 配置。</li>
+<li>通过 <code>new_turn_from_configuration()</code> 构造 <code>TurnContext</code>。</li>
+<li><code>RegularTask::run()</code> 再把这个 <code>TurnContext</code> 传给 <code>run_turn()</code>。</li>
+</ol>
+<p>在 <code>core/src/session/turn_context.rs</code> 中，<code>new_turn_from_configuration()</code> 做了几件关键的事情。</p>
+<p>第一，它确定本轮真正生效的 <code>cwd</code> 和环境。这里不是简单取 session 级配置，而是先看本轮是否有显式 turn environment；如果有，就优先使用 turn environment 的工作目录，否则再退回 session 的 <code>cwd</code>。这说明 Codex-RS 从设计上就允许”同一个 session 内，不同 turn 拥有不同执行环境”。</p>
+<p>第二，它基于 <code>SessionConfiguration</code> 派生出 <code>per_turn_config</code>。这一层的意义是把”全局可变配置”变成”本轮已解析配置”，后续模型信息、插件、skill、工具能力、权限策略都以这个 per-turn 视角为准。</p>
+<p>第三，它会立刻把当前 turn 的审批策略和权限配置同步给 <code>mcp_connection_manager</code>。这意味着外部 MCP 相关能力也必须和本轮权限边界保持一致，而不是沿用旧状态。</p>
+<p>第四，它根据当前模型名和 per-turn config 去 <code>models_manager</code> 里查 <code>model_info</code>。这一步的结果非常关键，因为后面是否支持并行工具调用、上下文窗口大小、是否启用 auto compact、输入模态等，都来自 <code>model_info</code>。</p>
+<p>第五，它根据配置加载本轮可见的插件，再从插件导出有效的 skill roots，然后交给 <code>skills_manager</code> 计算本轮可用 skills。这里已经能看出一个很典型的 Codex-RS 设计特点：<strong>skills 并不是一个独立于插件系统的孤立层，它和插件提供的能力空间是联动的。</strong></p>
+<p>最后，<code>make_turn_context(...)</code> 会把这些信息收束成一个完整的 <code>TurnContext</code>：其中包含模型信息、配置、权限、环境、plugin&#x2F;skill 结果、telemetry、输出 schema、session source 等等。到这一步，<code>run_turn()</code> 才拿到本轮真正的执行上下文。</p>
+<p>这就是为什么说 <code>TurnContext</code> 本质上是一份”turn 级快照”。它的核心价值不是为了封装数据，而是为了隔离变化。Session 在整个生命周期内是活的，配置可能继续被改；但某一轮 turn 一旦开始执行，就不能在半路换模型、换权限、换工作目录，否则模型看到的世界会前后不一致，工具层的安全边界也会失真。</p>
+<p>这和 <code>thread_config_snapshot()</code> 形成了一个对比。<code>thread_config_snapshot()</code> 位于 <code>core/src/session/session.rs</code>，更像是一个对外展示或查询用的简化快照，它返回 model、approval policy、permission profile、cwd、personality 等关键信息，适合状态栏、线程视图或其他只读场景。而 <code>TurnContext</code> 则是运行态真正使用的完整版上下文，它不仅更全，而且生命周期也更严格：一旦创建，就代表这轮 turn 的执行基线已经锁定。</p>
+<p>因此，从逻辑上说，<code>run_turn()</code> 的准备阶段其实不是从零开始，而是从一个已经冻结好的 <code>TurnContext</code> 开始。这是后面所有步骤能稳定运行的前提。</p>
+<hr>
+<h2 id="三、第一道闸门：pre-sampling-compact-先判断上下文是否已经太大"><a href="#三、第一道闸门：pre-sampling-compact-先判断上下文是否已经太大" class="headerlink" title="三、第一道闸门：pre-sampling compact 先判断上下文是否已经太大"></a>三、第一道闸门：pre-sampling compact 先判断上下文是否已经太大</h2><p><code>run_turn()</code> 开始后，最早执行的重要步骤之一，是 pre-sampling compact：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> pre_sampling_compacted <span class="token operator">=</span> <span class="token keyword">match</span> <span class="token function">run_pre_sampling_compact</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> <span class="token operator">&amp;</span>turn_context<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">Ok</span><span class="token punctuation">(</span>pre_sampling_compacted<span class="token punctuation">)</span> <span class="token operator">=></span> pre_sampling_compacted<span class="token punctuation">,</span>
+    <span class="token class-name">Err</span><span class="token punctuation">(</span>_<span class="token punctuation">)</span> <span class="token operator">=></span> <span class="token punctuation">&#123;</span>
+        <span class="token macro property">error!</span><span class="token punctuation">(</span><span class="token string">"Failed to run pre-sampling compact"</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+        <span class="token keyword">return</span> <span class="token class-name">None</span><span class="token punctuation">;</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>这一段出现在一切正式注入和采样之前。也就是说，系统还没把本轮新的上下文更新和新的用户输入正式记录进模型历史时，就先检查：<strong>现有历史会不会已经太大，大到需要压缩？</strong></p>
+<p>这一步的判断依赖模型的 <code>auto_compact_token_limit()</code>。代码中先从 <code>turn_context.model_info</code> 取出 auto compact 阈值；如果模型没配置这个阈值，就退回 <code>i64::MAX</code>，相当于”默认不触发自动压缩”。这说明 compact 不是一个全局一刀切的策略，而是与模型能力绑定的。</p>
+<p>从机制上说，compact 的目标不是”删除历史”，而是”重写历史”。它会收集历史消息，尤其是用户与助手之间那些占 token 很多、但不需要原样逐字保留的部分，再通过 compact 逻辑把长历史总结成更短的表示。这样做的核心收益有两个：</p>
+<ol>
+<li>让上下文重新回到模型可接受的范围内。</li>
+<li>尽量保留对后续推理仍然有价值的语义信息。</li>
+</ol>
+<p>这里的设计重点，不是摘要这件事本身，而是<strong>压缩发生的时机</strong>。它被放在准备阶段最前面，是因为后续还要继续往历史里塞东西：context injection、skill 注入、plugin 注入、用户新输入、额外上下文，这些都会进一步增加 token 负担。如果不先做 compact，后面再构建 prompt 时就更容易触发 context window 问题。</p>
+<p>不过，源码里有一条非常值得注意的 TODO，直接写在 <code>run_turn()</code> 附近。意思是：当前 pre-turn compaction 发生得比较早，它是在新的 context update 和新用户消息记录之前运行的，因此现在的判断还没有把”即将新增的这些内容”算进去。作者已经意识到，未来更理想的实现应该是预估”本轮待注入内容”会增加多少 token，再更提前、更准确地判断是否要 compact。</p>
+<p>这条 TODO 很有价值，因为它揭示了一个现实：Codex-RS 当前的 compact 机制已经实用，但并不是数学上最精确的。它优先解决了”在大多数情况下先别爆上下文”的问题，而不是一步做到最优。</p>
+<p>压缩之后还有一个经常被忽视、但很关键的联动动作：如果本轮之前已经预热过 <code>prewarmed_client_session</code>，而 compact 又真的发生了，那么系统会调用：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust">client_session<span class="token punctuation">.</span><span class="token function">reset_websocket_session</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
+
+<p>原因很直接。预热 session 的价值在于提前建立或复用与模型端的通信状态，例如 websocket 会话、上一次响应关联信息、粘性路由状态等。但 compact 一旦改写了历史，原来那个预热 session 所假设的”上下文基线”就不一定还成立。如果继续沿用旧会话，模型端和本地记录可能已经对不上。因此，compact 发生后必须重置 websocket session，确保后续真正采样时不会带着过期状态继续跑。</p>
+<p>从工程视角看，这一步说明 Codex-RS 对”会话复用”是谨慎的：可以为了性能尽量复用，但一旦前提条件变化，就必须果断丢弃，优先保证一致性。</p>
+<p>所以，pre-sampling compact 的真正意义，不只是”省 token”。它还是整个准备阶段的第一道闸门：先确保现有历史处于一个可继续增量构建的状态，后面所有准备动作才有地方落脚。</p>
+<hr>
+<h2 id="四、上下文注入：模型不是天然知道当前环境，系统必须显式告诉它"><a href="#四、上下文注入：模型不是天然知道当前环境，系统必须显式告诉它" class="headerlink" title="四、上下文注入：模型不是天然知道当前环境，系统必须显式告诉它"></a>四、上下文注入：模型不是天然知道当前环境，系统必须显式告诉它</h2><p>完成 compact 检查之后，<code>run_turn()</code> 进入下一步：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust">sess<span class="token punctuation">.</span><span class="token function">record_context_updates_and_set_reference_context_item</span><span class="token punctuation">(</span>turn_context<span class="token punctuation">.</span><span class="token function">as_ref</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span></span></code></pre></div></figure>
+
+<p>这行代码的名字很长，但也恰好暴露了它的两个职责：</p>
+<ol>
+<li><code>record_context_updates</code>：把本轮模型需要知道的上下文变更，记录进对话历史。</li>
+<li><code>set_reference_context_item</code>：把当前 turn 的上下文快照设为后续 diff 的参考基线。</li>
+</ol>
+<p>为什么一定要有这一步？因为模型虽然会收到 prompt，但它并不会天然知道当前 session 的工作目录、权限边界、审批策略、协作模式、额外开发者指令、用户指令、人格设定等运行条件。如果不把这些内容显式注入到模型可见历史中，模型就是在一个”只看得到用户消息、看不到操作环境”的半盲状态里工作。</p>
+<h3 id="4-1-首轮全量注入，后续按-diff-注入"><a href="#4-1-首轮全量注入，后续按-diff-注入" class="headerlink" title="4.1 首轮全量注入，后续按 diff 注入"></a>4.1 首轮全量注入，后续按 diff 注入</h3><p><code>record_context_updates_and_set_reference_context_item()</code> 的核心逻辑在 <code>core/src/session/mod.rs</code>。它首先从 session state 中取 <code>reference_context_item()</code>。这个字段可以理解成：”模型上一次已经被明确告知的 turn 配置基线是什么”。</p>
+<p>然后逻辑分成两路：</p>
+<ul>
+<li>如果 reference baseline 不存在，说明这是第一次注入，或者中途被重建过基线，那么走 <code>build_initial_context(turn_context)</code>。</li>
+<li>如果 baseline 已经存在，说明模型之前已经见过一个版本的上下文，那么只需要走 <code>build_settings_update_items(...)</code>，生成本轮相对上轮的增量变化。</li>
+</ul>
+<p>这是一种很典型的”首轮全量、后续增量”的上下文管理策略。它背后的收益非常直接：减少重复 token。</p>
+<p>首轮时，模型需要一次性知道完整背景，因此必须全量注入。这个全量上下文通常包括：</p>
+<ul>
+<li>base instructions</li>
+<li>developer instructions</li>
+<li>user instructions</li>
+<li>当前工作目录与环境</li>
+<li>权限与审批配置</li>
+<li>collaboration mode</li>
+<li>personality 相关说明</li>
+<li>其他会影响模型行为的系统级运行条件</li>
+</ul>
+<p>但如果第二轮、第三轮、第四轮这些配置都没变，那么每轮都原封不动再发一遍，就会造成巨大的 token 浪费。Codex-RS 通过 reference baseline 机制，把这种重复开销降到了最低：只有配置变了，才把变化重新告诉模型。</p>
+<h3 id="4-2-这一步不仅写历史，也持久化运行基线"><a href="#4-2-这一步不仅写历史，也持久化运行基线" class="headerlink" title="4.2 这一步不仅写历史，也持久化运行基线"></a>4.2 这一步不仅写历史，也持久化运行基线</h3><p>很多人在阅读这段代码时，会把注意力只放在 <code>record_conversation_items()</code> 上，以为它只是”把上下文消息塞进会话历史”。其实还有另一件同样重要的事：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">self</span><span class="token punctuation">.</span><span class="token function">persist_rollout_items</span><span class="token punctuation">(</span><span class="token operator">&amp;</span><span class="token punctuation">[</span><span class="token class-name">RolloutItem</span><span class="token punctuation">::</span><span class="token class-name">TurnContext</span><span class="token punctuation">(</span>turn_context_item<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">]</span><span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span></span></code></pre></div></figure>
+
+<p>也就是说，系统不仅把模型可见的上下文差异记进 history，还会把当前 turn 的 <code>TurnContextItem</code> 单独持久化到 rollout 里。源码注释写得很清楚：即使这一轮没有新的 model-visible diff，也仍然要持久化一个 <code>TurnContextItem</code>，这样在 resume、lazy replay、重建 durable baseline 时，系统仍然可以恢复出”这轮真实生效的上下文状态”。</p>
+<p>这说明 <code>record_context_updates...</code> 不只是 prompt 层的注入函数，它同时还是<strong>恢复能力的一部分</strong>。它把”模型看到的变化”和”系统内部需要记住的状态基线”同时维护起来。</p>
+<h3 id="4-3-为什么-diff-基线一定要前移"><a href="#4-3-为什么-diff-基线一定要前移" class="headerlink" title="4.3 为什么 diff 基线一定要前移"></a>4.3 为什么 diff 基线一定要前移</h3><p>函数最后还有一步：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust">state<span class="token punctuation">.</span><span class="token function">set_reference_context_item</span><span class="token punctuation">(</span><span class="token class-name">Some</span><span class="token punctuation">(</span>turn_context_item<span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span></span></code></pre></div></figure>
+
+<p>即使这一轮没有任何新的上下文项被注入，它也会更新内存中的 diff baseline。为什么？因为”是否需要给模型补发上下文”与”系统当前真实配置状态是什么”是两个相关但不完全相同的问题。某些场景下，这一轮没有产生新的 model-visible 文本，但 turn 的运行态仍然已经切换到了新的配置。如果不更新 baseline，后续 diff 就会拿旧状态做比较，导致重复注入或者漏注入。</p>
+<p>换句话说，这里的 baseline 不是一个”模型历史里上次发了什么文本”的简单缓存，而是一个”下一轮应该以什么状态为参照”的运行基准。</p>
+<p>从整体上看，这一阶段完成的是一项基础设施工作：把 session 内部的真实配置状态，转化成模型能够理解、并且尽量低成本维护的一套显式上下文。这是后续任何高质量采样的前提。</p>
+<hr>
+<h2 id="五、skill-与-plugin-注入：把用户显式点名的能力暴露给模型"><a href="#五、skill-与-plugin-注入：把用户显式点名的能力暴露给模型" class="headerlink" title="五、skill 与 plugin 注入：把用户显式点名的能力暴露给模型"></a>五、skill 与 plugin 注入：把用户显式点名的能力暴露给模型</h2><p>上下文基线建立好之后，<code>run_turn()</code> 开始处理本轮显式提及的扩展能力。这里主要分成 plugin 和 skill 两条线，但它们不是完全独立的，而是共享一部分前置数据，例如可用插件、MCP 工具、可访问 connectors。</p>
+<h3 id="5-1-先确定本轮有哪些插件和-app-能力真正可见"><a href="#5-1-先确定本轮有哪些插件和-app-能力真正可见" class="headerlink" title="5.1 先确定本轮有哪些插件和 app 能力真正可见"></a>5.1 先确定本轮有哪些插件和 app 能力真正可见</h3><p>代码首先根据当前 turn 的配置，向 <code>plugins_manager</code> 请求当前可用插件：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> loaded_plugins <span class="token operator">=</span> sess
+    <span class="token punctuation">.</span>services
+    <span class="token punctuation">.</span>plugins_manager
+    <span class="token punctuation">.</span><span class="token function">plugins_for_config</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>turn_context<span class="token punctuation">.</span>config<span class="token punctuation">.</span><span class="token function">plugins_config_input</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>接下来会解析用户输入中显式提到的插件。这里处理的是两类显式引用：结构化的 <code>plugin://...</code> 路径，以及文本中的插件提及。系统只会对当前 session 已启用的插件做解析，而不会凭空让一个未启用插件进入本轮 prompt。</p>
+<p>随后，如果本轮开启了 apps，或者虽然没开 apps 但用户显式提到了插件，系统就会去 <code>mcp_connection_manager</code> 里列出当前所有 MCP tools。这里的设计很细：即使 app tools 平时默认隐藏，只要用户明确点名了一个插件，系统也愿意去拿它当前可用的 MCP&#x2F;app inventory，因为接下来它要把”这个插件现在到底能干什么”告诉模型。</p>
+<p>然后代码还会构造 <code>available_connectors</code>。这一步不是简单读取插件声明，而是经过几层筛选：</p>
+<ol>
+<li>插件声明了哪些 app。</li>
+<li>当前 MCP 环境实际上暴露了哪些可访问 app。</li>
+<li>两者合并后，再根据 turn config 里的启用状态做过滤。</li>
+</ol>
+<p>最后留下的，才是本轮真正对模型有意义的 app&#x2F;connector 集合。这个过程体现出 Codex-RS 的一个基本原则：<strong>模型能被告知的能力，应当以当前会话真实可达能力为准，而不是只看静态声明。</strong></p>
+<h3 id="5-2-skill-提及解析：不是所有名字都能直接命中"><a href="#5-2-skill-提及解析：不是所有名字都能直接命中" class="headerlink" title="5.2 skill 提及解析：不是所有名字都能直接命中"></a>5.2 skill 提及解析：不是所有名字都能直接命中</h3><p>skill 注入逻辑由 <code>collect_explicit_skill_mentions()</code> 和 <code>build_skill_injections()</code> 组成。</p>
+<p><code>collect_explicit_skill_mentions()</code> 位于 <code>core-skills/src/injection.rs</code>。它不是一个简单的字符串查找，而是一套有选择规则的解析流程：</p>
+<ul>
+<li>先处理结构化的 <code>UserInput::Skill</code>，按路径做精确匹配。</li>
+<li>对文本输入，再扫描 <code>$skill-name</code> 这类 mention。</li>
+<li>解析时会跳过 disabled skills。</li>
+<li>会同时做去重。</li>
+<li>对 plain name 的匹配还要考虑歧义；如果多个 skill 名字冲突，或者与 connector slug 冲突，就不会轻率匹配。</li>
+</ul>
+<p>这部分代码非常说明问题。Codex-RS 并不想把”用户写了一个看起来像 skill 名称的词”直接当成高可信指令，而是尽量要求显式且可消歧的引用。这能降低误注入 skill 的风险。</p>
+<h3 id="5-3-skill-文件真正注入的，是-SKILL-md-正文"><a href="#5-3-skill-文件真正注入的，是-SKILL-md-正文" class="headerlink" title="5.3 skill 文件真正注入的，是 SKILL.md 正文"></a>5.3 skill 文件真正注入的，是 <code>SKILL.md</code> 正文</h3><p>解析出 <code>mentioned_skills</code> 后，<code>build_skill_injections()</code> 才真正去读 skill 文件。它会为每个显式提及的 skill 找到对应文件系统，再读取 <code>path_to_skills_md</code> 指向的 <code>SKILL.md</code> 文本，把结果封装成：</p>
+<ul>
+<li><code>name</code></li>
+<li><code>path</code></li>
+<li><code>contents</code></li>
+</ul>
+<p>如果读取失败，不会让整轮 turn 崩掉，而是把错误转成 warning。这个 warning 后面会通过 session 事件通道广播出去，让前端或其他订阅方决定如何呈现。</p>
+<p>成功读取后的 skill 注入不会立刻”变成 Prompt”，而是先被包装成 <code>ResponseItem</code>。值得注意的是，这里用的是 <code>SkillInstructions</code>，它实现的 <code>ContextualUserFragment</code> 角色是 <code>user</code>，并带有 <code>&lt;skill&gt;...&lt;/skill&gt;</code> 标记。这意味着 skill 更像是”用户在当前回合显式附带的一份额外操作说明”，而不是系统级 developer 指令。</p>
+<p>这种角色设计很微妙，也很合理。skill 本身通常表达的是一种任务专长或专门工作流，往往是用户显式要求系统临时引入的能力，因此放在 <code>user</code> 语义层更贴近真实意图。</p>
+<h3 id="5-4-plugin-注入：不灌整份插件文件，而是灌能力摘要"><a href="#5-4-plugin-注入：不灌整份插件文件，而是灌能力摘要" class="headerlink" title="5.4 plugin 注入：不灌整份插件文件，而是灌能力摘要"></a>5.4 plugin 注入：不灌整份插件文件，而是灌能力摘要</h3><p>plugin 的处理方式和 skill 不同。<code>build_plugin_injections()</code> 位于 <code>core/src/plugins/injection.rs</code>，它不会去读取某个”插件全文说明文档”塞给模型，而是根据当前显式提及的插件、当前可见 MCP server、当前可用 app，生成一段<strong>developer hint</strong>。</p>
+<p>这些 hint 大致会告诉模型：</p>
+<ul>
+<li>这个插件有哪些可见 MCP servers。</li>
+<li>这个插件是否带有 skill 前缀。</li>
+<li>这个插件对应哪些当前启用的 apps。</li>
+</ul>
+<p>最后这段内容被包装成 <code>PluginInstructions</code>，角色是 <code>developer</code>。这意味着 plugin 注入表达的是”系统层面对当前能力面的说明”，而不是用户要求模型必须执行的一段内容。</p>
+<p>这和 skill 的区别很关键：</p>
+<ul>
+<li>skill 更像用户显式附带的专业化提示，放在 <code>user</code> 侧。</li>
+<li>plugin 更像系统告诉模型”你现在可以调哪些插件能力”，放在 <code>developer</code> 侧。</li>
+</ul>
+<h3 id="5-5-注入顺序与历史落点"><a href="#5-5-注入顺序与历史落点" class="headerlink" title="5.5 注入顺序与历史落点"></a>5.5 注入顺序与历史落点</h3><p>在 <code>run_turn()</code> 里，skill 和 plugin 的结果并不是马上组装成最终 prompt，而是先转成 <code>ResponseItem</code>，然后通过 <code>sess.record_conversation_items(...)</code> 写进 conversation history。</p>
+<p>顺序上，代码是在记录用户输入和 additional contexts 之后，再把 skill items 和 plugin items 记进历史。这一点值得在理解上保持准确：<strong>这些注入内容的直接落点是 session history，而不是某个一次性内存 prompt 缓冲区。</strong></p>
+<p>这也是为什么后面 loop 中每次重新构建 prompt 时，可以直接从最新历史拿到这些内容。准备阶段负责”把该存在的上下文写进历史”；采样阶段负责”按需把当前历史读出来组装 prompt”。两者职责清晰分离。</p>
+<hr>
+<h2 id="六、hook、用户消息与附加上下文：真正把”这轮输入”登记进系统"><a href="#六、hook、用户消息与附加上下文：真正把”这轮输入”登记进系统" class="headerlink" title="六、hook、用户消息与附加上下文：真正把”这轮输入”登记进系统"></a>六、hook、用户消息与附加上下文：真正把”这轮输入”登记进系统</h2><p>如果说前面的 compact、context injection、skill&#x2F;plugin 解析主要是在为模型准备环境，那么接下来这部分逻辑就是在为”本轮输入本身”完成入场手续。</p>
+<h3 id="6-1-session-start-hook-先跑一遍"><a href="#6-1-session-start-hook-先跑一遍" class="headerlink" title="6.1 session start hook 先跑一遍"></a>6.1 session start hook 先跑一遍</h3><p>在记录用户消息之前，<code>run_turn()</code> 会先调用：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">if</span> <span class="token function">run_pending_session_start_hooks</span><span class="token punctuation">(</span><span class="token operator">&amp;</span>sess<span class="token punctuation">,</span> <span class="token operator">&amp;</span>turn_context<span class="token punctuation">)</span><span class="token punctuation">.</span><span class="token keyword">await</span> <span class="token punctuation">&#123;</span>
+    <span class="token keyword">return</span> <span class="token class-name">None</span><span class="token punctuation">;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>这意味着某些 session start hook 可能会延迟到真正有 turn 运行时才补执行。如果这些 hook 决定中止流程，那么本轮 turn 会直接结束，不再往下走。</p>
+<p>这里体现出一个设计取向：hook 不是 loop 中的附属玩具，而是正式执行链的一部分。只要 hook 可能影响本轮是否继续，它就必须在采样前跑完。</p>
+<h3 id="6-2-user-prompt-submit-hook-在消息入历史前拦截"><a href="#6-2-user-prompt-submit-hook-在消息入历史前拦截" class="headerlink" title="6.2 user prompt submit hook 在消息入历史前拦截"></a>6.2 user prompt submit hook 在消息入历史前拦截</h3><p>接着，如果本轮 <code>input</code> 非空，系统会运行 <code>run_user_prompt_submit_hooks(...)</code>。它拿到的是本次用户消息构成的完整 message 文本，而不是拆散后的 token 片段。</p>
+<p>这一层 hook 可以返回 <code>should_stop</code> 和 <code>additional_contexts</code>。如果 <code>should_stop</code> 为真，说明 hook 已经决定阻止本轮继续执行，那么系统只记录额外上下文后就返回，不再进入后续采样。</p>
+<p>这一步的顺序也非常重要：<strong>hook 先看用户输入，再决定是否让这条输入真正进入主历史。</strong> 这让 submit hook 可以实现诸如预检查、策略拦截、输入增强等功能，而不会因为消息已经正式入历史而难以回头。</p>
+<h3 id="6-3-用户输入正式写入-conversation-history"><a href="#6-3-用户输入正式写入-conversation-history" class="headerlink" title="6.3 用户输入正式写入 conversation history"></a>6.3 用户输入正式写入 conversation history</h3><p>如果 submit hook 没有阻止本轮，系统才会调用：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust">sess<span class="token punctuation">.</span><span class="token function">record_user_prompt_and_emit_turn_item</span><span class="token punctuation">(</span>turn_context<span class="token punctuation">.</span><span class="token function">as_ref</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token operator">&amp;</span>input<span class="token punctuation">,</span> response_item<span class="token punctuation">)</span>
+    <span class="token punctuation">.</span><span class="token keyword">await</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span></span></code></pre></div></figure>
+
+<p>这一步既记录用户 prompt，也触发 turn item 级别的事件。换句话说，到这里为止，”本轮用户确实说了什么”才真正成为 session 历史的一部分。</p>
+<p>这也解释了为什么前面 compact TODO 会提到”当前 compact 发生在新的用户消息记录之前”。因为从源码顺序看，用户输入确实还没在最早阶段正式入历史。</p>
+<h3 id="6-4-additional-contexts-和-connector-selection-的合并"><a href="#6-4-additional-contexts-和-connector-selection-的合并" class="headerlink" title="6.4 additional contexts 和 connector selection 的合并"></a>6.4 additional contexts 和 connector selection 的合并</h3><p>submit hook 返回的 <code>additional_contexts</code> 不会丢掉，而是通过 <code>record_additional_contexts(...)</code> 再写入系统。与此同时，代码还会把显式提及的 app&#x2F;connectors 与从 skill items 中识别出来的 connector 使用意图合并，然后更新 session 级 connector selection。</p>
+<p>这一部分看似零碎，实际上非常重要。因为它说明：用户这轮输入，不只是”一段文本”，还可能隐含”我想用哪个 app””我明确打开了哪些 connector””hook 给这轮补充了哪些额外上下文”。这些附带信号如果不在采样前统一落账，模型后面看到的 prompt 就只是一条裸用户消息，丢掉了很多可执行上下文。</p>
+<h3 id="6-5-previous-turn-settings-的更新"><a href="#6-5-previous-turn-settings-的更新" class="headerlink" title="6.5 previous turn settings 的更新"></a>6.5 previous turn settings 的更新</h3><p>如果本轮确实有新输入，系统还会更新 <code>PreviousTurnSettings</code>，保存本轮模型与 realtime_active 状态。源码注释写得很清楚：这个 baseline 只在 regular user-turn 路径更新，这样 standalone 的 compact、shell、review 之类任务不会错误地污染后续”真实用户轮次”的设置基线。</p>
+<p>这说明 Codex-RS 对”什么才算真实用户 turn”有严格区分，而不是把所有任务都混在一起做差分。</p>
+<p>整体来看，这一大段逻辑的作用可以概括为一句话：<strong>把这轮输入从一个外部请求，转化成系统内部已经登记、已经附带上下文、已经可被模型消费的正式 turn 历史。</strong></p>
+<hr>
+<h2 id="七、Prompt-什么时候真正组装：不是现在，而是在后面的采样-loop-中动态构建"><a href="#七、Prompt-什么时候真正组装：不是现在，而是在后面的采样-loop-中动态构建" class="headerlink" title="七、Prompt 什么时候真正组装：不是现在，而是在后面的采样 loop 中动态构建"></a>七、Prompt 什么时候真正组装：不是现在，而是在后面的采样 loop 中动态构建</h2><p>很多文章讲到这里，会顺手把”技能&#x2F;插件注入 + Prompt 组装”并列成同一个步骤，这样说并不完全错，但如果要严格对源码负责，就必须更精确一点：<strong>准备阶段确实完成了 prompt 需要的材料准备，但真正的 <code>Prompt</code> 结构体不是在这一步一次性组好的，而是在后面的 <code>run_sampling_request()</code> loop 中动态构建。</strong></p>
+<p><code>build_prompt(...)</code> 定义在 <code>core/src/session/turn.rs</code> 靠后的位置：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">pub</span><span class="token punctuation">(</span><span class="token keyword">crate</span><span class="token punctuation">)</span> <span class="token keyword">fn</span> <span class="token function-definition function">build_prompt</span><span class="token punctuation">(</span>
+    input<span class="token punctuation">:</span> <span class="token class-name">Vec</span><span class="token operator">&lt;</span><span class="token class-name">ResponseItem</span><span class="token operator">></span><span class="token punctuation">,</span>
+    router<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">ToolRouter</span><span class="token punctuation">,</span>
+    turn_context<span class="token punctuation">:</span> <span class="token operator">&amp;</span><span class="token class-name">TurnContext</span><span class="token punctuation">,</span>
+    base_instructions<span class="token punctuation">:</span> <span class="token class-name">BaseInstructions</span><span class="token punctuation">,</span>
+<span class="token punctuation">)</span> <span class="token punctuation">-></span> <span class="token class-name">Prompt</span> <span class="token punctuation">&#123;</span>
+    <span class="token class-name">Prompt</span> <span class="token punctuation">&#123;</span>
+        input<span class="token punctuation">,</span>
+        tools<span class="token punctuation">:</span> router<span class="token punctuation">.</span><span class="token function">model_visible_specs</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        parallel_tool_calls<span class="token punctuation">:</span> turn_context<span class="token punctuation">.</span>model_info<span class="token punctuation">.</span>supports_parallel_tool_calls<span class="token punctuation">,</span>
+        base_instructions<span class="token punctuation">,</span>
+        personality<span class="token punctuation">:</span> turn_context<span class="token punctuation">.</span>personality<span class="token punctuation">,</span>
+        output_schema<span class="token punctuation">:</span> turn_context<span class="token punctuation">.</span>final_output_json_schema<span class="token punctuation">.</span><span class="token function">clone</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+        output_schema_strict<span class="token punctuation">:</span> <span class="token operator">!</span><span class="token keyword">crate</span><span class="token module-declaration namespace"><span class="token punctuation">::</span>guardian<span class="token punctuation">::</span></span><span class="token function">is_guardian_reviewer_source</span><span class="token punctuation">(</span>
+            <span class="token operator">&amp;</span>turn_context<span class="token punctuation">.</span>session_source<span class="token punctuation">,</span>
+        <span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token punctuation">&#125;</span>
+<span class="token punctuation">&#125;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>这个函数本身很直白：它把当前历史、工具 schema、并行工具开关、base instructions、personality、输出 schema 等封装成一个 <code>Prompt</code>。但关键不在函数内容，而在它的调用时机。</p>
+<p>在 <code>run_sampling_request()</code> 内部，系统会先构建 <code>ToolRouter</code>，再进入一个 loop。每轮 loop 都会做：</p>
+<ul>
+<li>如果这是第一次采样，就用传入的 <code>input</code>。</li>
+<li>如果不是第一次，就重新从 <code>sess.clone_history().await.for_prompt(...)</code> 拉最新历史。</li>
+<li>再调用 <code>build_prompt(...)</code> 生成当轮 prompt。</li>
+</ul>
+<p>这意味着 prompt 是<strong>按回合即时构建</strong>的，而不是在准备阶段做一次、后面一直复用。这样设计的好处非常明显：</p>
+<ol>
+<li>一轮 turn 内如果发生了工具调用，历史会变，新一轮 prompt 需要自动带上这些新结果。</li>
+<li>skill&#x2F;plugin&#x2F;context&#x2F;user message 都已经在准备阶段写入 history，后续 prompt 不需要再维护一份平行缓存，只要读当前历史即可。</li>
+<li>prompt 构建逻辑与历史维护逻辑解耦，系统状态更容易保持一致。</li>
+</ol>
+<p>因此，更准确的说法应该是：</p>
+<ul>
+<li>准备阶段负责把 prompt 所需的上下文材料写入系统历史，并完成运行态初始化。</li>
+<li>采样阶段在 loop 中按需从最新历史读取这些材料，动态构建真正送往模型的 <code>Prompt</code>。</li>
+</ul>
+<p>这个区分非常值得强调，因为它直接体现了 Codex-RS 的架构风格：不是”先攒一个巨型 prompt 缓冲区再用”，而是”维护一份可重放、可增量更新的历史，再按需投影成 prompt”。</p>
+<hr>
+<h2 id="八、进入-loop-前的最后初始化：把执行态对象准备好"><a href="#八、进入-loop-前的最后初始化：把执行态对象准备好" class="headerlink" title="八、进入 loop 前的最后初始化：把执行态对象准备好"></a>八、进入 loop 前的最后初始化：把执行态对象准备好</h2><p>完成前面的上下文、消息、能力与 hook 处理之后，<code>run_turn()</code> 才进入最后一组”发车前检查”：</p>
+<figure><div class="code-wrapper"><pre class="line-numbers language-rust" data-language="rust"><code class="language-rust"><span class="token keyword">let</span> <span class="token keyword">mut</span> last_agent_message<span class="token punctuation">:</span> <span class="token class-name">Option</span><span class="token operator">&lt;</span><span class="token class-name">String</span><span class="token operator">></span> <span class="token operator">=</span> <span class="token class-name">None</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> <span class="token keyword">mut</span> stop_hook_active <span class="token operator">=</span> <span class="token boolean">false</span><span class="token punctuation">;</span>
+<span class="token keyword">let</span> turn_diff_tracker <span class="token operator">=</span> <span class="token class-name">Arc</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token namespace">tokio<span class="token punctuation">::</span>sync<span class="token punctuation">::</span></span><span class="token class-name">Mutex</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token class-name">TurnDiffTracker</span><span class="token punctuation">::</span><span class="token function">new</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token keyword">let</span> <span class="token keyword">mut</span> client_session <span class="token operator">=</span>
+    prewarmed_client_session<span class="token punctuation">.</span><span class="token function">unwrap_or_else</span><span class="token punctuation">(</span><span class="token closure-params"><span class="token closure-punctuation punctuation">|</span><span class="token closure-punctuation punctuation">|</span></span> sess<span class="token punctuation">.</span>services<span class="token punctuation">.</span>model_client<span class="token punctuation">.</span><span class="token function">new_session</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token keyword">let</span> <span class="token keyword">mut</span> can_drain_pending_input <span class="token operator">=</span> input<span class="token punctuation">.</span><span class="token function">is_empty</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">;</span><span aria-hidden="true" class="line-numbers-rows"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span></code></pre></div></figure>
+
+<p>这几行常常被一眼带过，但它们实际上标志着准备阶段即将结束、执行阶段即将开始。</p>
+<p><code>last_agent_message</code> 用来记录本轮助手最终对外返回的最后一段消息；<code>stop_hook_active</code> 则参与后续停止逻辑的控制。它们属于 loop 运行中的状态变量。</p>
+<p><code>TurnDiffTracker</code> 则更有代表性。它负责追踪本轮执行过程中产生的文件变更 diff。虽然它在代码层面可能跟随 task 生命周期，但从用户语义上看，它服务的就是”这一轮交互造成了哪些变更”。因此它必须在 loop 启动前就创建好，这样后续工具执行、文件修改、输出总结都能共享同一份 diff 视图。</p>
+<p><code>client_session</code> 则是模型通信的真正入口。如果前面已经有预热好的 client session，就复用；否则新建一个。注意这个对象是 <strong>turn 级</strong> 的，不是整个 session 级永久单例。原因也很合理：同一轮 turn 内的多次采样、重试、工具往返，适合共享同一条模型通信会话；但跨 turn 之后，配置、历史、上下文都可能变化，没必要盲目强绑成全局长生命周期对象。</p>
+<p>最后一个变量 <code>can_drain_pending_input</code> 也很有意思。它的初值取决于这轮 <code>input.is_empty()</code>。如果这轮已经有新的用户输入，系统不会一上来就先排空 pending input，而是优先让模型看到最新鲜的用户消息；只有在没有新输入时，才允许直接处理积压的 pending input。这个细节说明 Codex-RS 在 turn 调度上很注意”新鲜输入优先”的交互体验。</p>
+<p>到这里，<code>run_turn()</code> 才真正具备了进入采样 loop 的所有条件：</p>
+<ul>
+<li>本轮配置已经冻结成 <code>TurnContext</code></li>
+<li>历史大小已经过 compact 检查</li>
+<li>模型可见上下文已经注入</li>
+<li>显式 skill&#x2F;plugin 能力已经转成历史项</li>
+<li>用户输入和额外上下文已经落账</li>
+<li>hooks 已经执行完毕</li>
+<li>模型通信 session 与 turn diff tracker 已就绪</li>
+</ul>
+<p>也就是说，loop 还没开始，但一轮 turn 在工程意义上其实已经”准备完毕”了。</p>
+<hr>
+<h2 id="九、如何理解这整个准备阶段的设计价值"><a href="#九、如何理解这整个准备阶段的设计价值" class="headerlink" title="九、如何理解这整个准备阶段的设计价值"></a>九、如何理解这整个准备阶段的设计价值</h2><p>把这段代码连起来看，会发现 Codex-RS 的准备阶段并不是若干随机散落的前置步骤，而是围绕一个核心目标展开：<strong>在真正采样之前，把本轮 turn 压缩成一个一致、稳定、低成本、可恢复、可执行的运行面。</strong></p>
+<p>这个目标至少体现在五个层面。</p>
+<p>第一，是<strong>配置一致性</strong>。<code>TurnContext</code> 先冻结，避免执行过程中 session 配置漂移导致模型前后看到不同世界。</p>
+<p>第二，是<strong>上下文可控性</strong>。通过 pre-sampling compact 和 context diff 注入，系统既控制了 token 成本，也控制了模型真正看到哪些运行条件。</p>
+<p>第三，是<strong>能力显式化</strong>。skill 和 plugin 不会隐式神秘出现，而是要求用户显式提及、系统显式解析、最后显式写入历史。这让模型的能力面更加可追踪。</p>
+<p>第四，是<strong>恢复与追溯能力</strong>。<code>TurnContextItem</code> 被持久化到 rollout，不只是为了当前这一轮能跑，还为了未来 resume、replay、分析时能重建当时的运行基线。</p>
+<p>第五，是<strong>交互秩序</strong>。hooks、用户消息、additional contexts、pending input、connector selection 都在进入 loop 前排好顺序，避免采样时一边跑一边补上下文造成状态混乱。</p>
+<p>如果没有这些准备动作，理论上系统也许还能”勉强发出一次模型请求”，但结果会很差：上下文容易超限，模型对当前环境认知不足，权限边界不清，用户显式提到的能力无法可靠注入，断线重试和 replay 也难以保持一致。换句话说，<strong>真正让 <code>run_turn()</code> 成为工程化对话循环的，不是后面的 loop 本身，而是前面这一整套准备机制。</strong></p>
+<hr>
+<h2 id="十、结语：准备阶段决定了-loop-能否”正确地开始”"><a href="#十、结语：准备阶段决定了-loop-能否”正确地开始”" class="headerlink" title="十、结语：准备阶段决定了 loop 能否”正确地开始”"></a>十、结语：准备阶段决定了 loop 能否”正确地开始”</h2><p>很多系统把模型调用理解成”拼一段 prompt 然后发请求”，而 <code>codex-rs</code> 的实现告诉我们，成熟的 agent 框架远不止如此。对于 Codex-RS 来说，一次 turn 在进入 loop 前至少要解决四类问题：</p>
+<ul>
+<li>本轮配置是什么，是否已经冻结。</li>
+<li>当前历史是否还能装下更多内容。</li>
+<li>模型应当看到哪些上下文、能力和用户输入。</li>
+<li>后续 loop 运行所需的通信与追踪对象是否已经就绪。</li>
+</ul>
+<p>只有这些问题都处理完，模型采样才有意义。否则 loop 即使启动，也是在一个不稳定、信息不全、边界不清的环境里运行。</p>
+<p>因此，如果要用一句话概括本文的结论，那就是：</p>
+<p><strong><code>run_turn()</code> 真正的难点，不在”如何把模型跑起来”，而在”如何让模型在一个被准备好的世界里跑起来”。</strong></p>
+<p>而这个”被准备好的世界”，正是本文分析的进入 loop 前准备阶段。</p>
+
+                
+              </div>
+            
+            <hr/>
+            <div>
+              <div class="post-metas my-3">
+  
+    <div class="post-meta mr-3 d-flex align-items-center">
+      <i class="iconfont icon-category"></i>
+      
+
+<span class="category-chains">
+  
+  
+    
+      <span class="category-chain">
+        
+  <a href="/categories/%E6%8A%80%E6%9C%AF%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90/" class="category-chain-item">技术深度解析</a>
+  
+  
+    <span>></span>
+    
+  <a href="/categories/%E6%8A%80%E6%9C%AF%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90/%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" class="category-chain-item">源码分析</a>
+  
+  
+
+  
+
+      </span>
+    
+  
+</span>
+
+    </div>
+  
+  
+    <div class="post-meta">
+      <i class="iconfont icon-tags"></i>
+      
+        <a href="/tags/Codex-RS/" class="print-no-link">#Codex-RS</a>
+      
+        <a href="/tags/Rust/" class="print-no-link">#Rust</a>
+      
+        <a href="/tags/AI-Agent/" class="print-no-link">#AI Agent</a>
+      
+        <a href="/tags/%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" class="print-no-link">#源码分析</a>
+      
+        <a href="/tags/%E4%B8%8A%E4%B8%8B%E6%96%87%E7%AE%A1%E7%90%86/" class="print-no-link">#上下文管理</a>
+      
+        <a href="/tags/%E6%9E%B6%E6%9E%84%E8%AE%BE%E8%AE%A1/" class="print-no-link">#架构设计</a>
+      
+        <a href="/tags/run-turn/" class="print-no-link">#run_turn</a>
+      
+    </div>
+  
+</div>
+
+
+              
+  
+
+  <div class="license-box my-3">
+    <div class="license-title">
+      <div>Codex-RS 学习报告：run_turn() 进入 loop 前的准备阶段</div>
+      <div>http://example.com/2026/05/13/Codex-RS-学习报告-run-turn-进入-loop-前的准备阶段/</div>
+    </div>
+    <div class="license-meta">
+      
+        <div class="license-meta-item">
+          <div>作者</div>
+          <div>sakiko-toyokawa</div>
+        </div>
+      
+      
+        <div class="license-meta-item license-meta-date">
+          <div>发布于</div>
+          <div>2026年5月13日</div>
+        </div>
+      
+      
+      
+        <div class="license-meta-item">
+          <div>许可协议</div>
+          <div>
+            
+              
+              
+                <a class="print-no-link" target="_blank" href="https://creativecommons.org/licenses/by/4.0/">
+                  <span class="hint--top hint--rounded" aria-label="BY - 署名">
+                    <i class="iconfont icon-cc-by"></i>
+                  </span>
+                </a>
+              
+            
+          </div>
+        </div>
+      
+    </div>
+    <div class="license-icon iconfont"></div>
+  </div>
+
+
+
+              
+                <div class="post-prevnext my-3">
+                  <article class="post-prev col-6">
+                    
+                    
+                  </article>
+                  <article class="post-next col-6">
+                    
+                    
+                      <a href="/2026/05/04/ThreadManager-Codex%E5%B9%B6%E5%8F%91%E4%BB%BB%E5%8A%A1%E8%B0%83%E5%BA%A6%E4%B8%AD%E6%9E%A2%E7%9A%84%E6%B7%B1%E5%BA%A6%E8%A7%A3%E6%9E%90/" title="ThreadManager：Codex 并发任务调度中枢的深度解析">
+                        <span class="hidden-mobile">ThreadManager：Codex 并发任务调度中枢的深度解析</span>
+                        <span class="visible-mobile">下一篇</span>
+                        <i class="iconfont icon-arrowright"></i>
+                      </a>
+                    
+                  </article>
+                </div>
+              
+            </div>
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-col d-none d-lg-block col-lg-2">
+      
+  <aside class="sidebar" style="margin-left: -1rem">
+    <div id="toc">
+  <p class="toc-header">
+    <i class="iconfont icon-list"></i>
+    <span>目录</span>
+  </p>
+  <div class="toc-body" id="toc-body"></div>
+</div>
+
+
+
+  </aside>
+
+
+    </div>
+  </div>
+</div>
+
+
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  <script>
+  Fluid.utils.createScript('https://lib.baomitu.com/mermaid/10.9.0/mermaid.min.js', function() {
+    mermaid.initialize({"theme":"default"});
+
+    Fluid.utils.listenDOMLoaded(function() {
+      Fluid.events.registerRefreshCallback(function() {
+        if ('mermaid' in window) {
+          mermaid.init();
+        }
+      });
+    });
+  });
+
+  // 点击放大 mermaid 图表
+  (function() {
+    var style = document.createElement('style');
+    style.textContent = '.mermaid svg { cursor: zoom-in; } .mermaid svg:hover { opacity: 0.85; }';
+    document.head.appendChild(style);
+
+    document.body.addEventListener('click', function(e) {
+      var svg = e.target.closest('.mermaid svg');
+      if (!svg) return;
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+      var clone = svg.cloneNode(true);
+      clone.style.cssText = 'max-width:95vw;max-height:95vh;width:auto;height:auto;background:#fff;border-radius:4px;padding:12px';
+      clone.title = '点击关闭';
+      overlay.appendChild(clone);
+      overlay.addEventListener('click', function() { overlay.remove(); });
+      document.body.appendChild(overlay);
+    });
+  })();
+</script>
+
+
+
+
+
+
+    
+
+    
+      <a id="scroll-top-button" aria-label="TOP" href="#" role="button">
+        <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+      </a>
+    
+
+    
+      <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel"
+     aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">搜索</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">关键词</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+    
+
+    
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+  
+    <div class="footer-content">
+       <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a> <i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a> 
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+
+  <!-- Scripts -->
+  
+  <script  src="https://lib.baomitu.com/nprogress/0.2.0/nprogress.min.js" ></script>
+  <link  rel="stylesheet" href="https://lib.baomitu.com/nprogress/0.2.0/nprogress.min.css" />
+
+  <script>
+    NProgress.configure({"showSpinner":false,"trickleSpeed":100})
+    NProgress.start()
+    window.addEventListener('load', function() {
+      NProgress.done();
+    })
+  </script>
+
+
+<script  src="https://lib.baomitu.com/jquery/3.6.4/jquery.min.js" ></script>
+<script  src="https://lib.baomitu.com/twitter-bootstrap/4.6.1/js/bootstrap.min.js" ></script>
+<script  src="/js/events.js" ></script>
+<script  src="/js/plugins.js" ></script>
+
+
+  <script  src="https://lib.baomitu.com/typed.js/2.0.12/typed.min.js" ></script>
+  <script>
+    (function (window, document) {
+      var typing = Fluid.plugins.typing;
+      var subtitle = document.getElementById('subtitle');
+      if (!subtitle || !typing) {
+        return;
+      }
+      var text = subtitle.getAttribute('data-typed-text');
+      
+        typing(text);
+      
+    })(window, document);
+  </script>
+
+
+
+
+  
+    <script  src="/js/img-lazyload.js" ></script>
+  
+
+
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/tocbot/4.20.1/tocbot.min.js', function() {
+    var toc = jQuery('#toc');
+    if (toc.length === 0 || !window.tocbot) { return; }
+    var boardCtn = jQuery('#board-ctn');
+    var boardTop = boardCtn.offset().top;
+
+    function isExpandAllEnabled() {
+      return CONFIG.toc && CONFIG.toc.expand_all === true;
+    }
+    function expandAllToc() {
+      if (!isExpandAllEnabled()) { return; }
+      jQuery('#toc-body .tocbot-is-collapsed').removeClass('tocbot-is-collapsed');
+    }
+    function updateTocToggle($li, $childList) {
+      var $toggle = $li.children('.toc-toggle');
+      if ($toggle.length === 0) { return; }
+      var collapsed = $childList.hasClass('tocbot-is-collapsed');
+      $toggle
+        .toggleClass('toc-toggle-collapsed', collapsed)
+        .toggleClass('toc-toggle-expanded', !collapsed);
+    }
+    function bindTocToggle() {
+      if (!isExpandAllEnabled()) { return; }
+      jQuery('#toc-body .toc-list-item').each(function() {
+        var $li = jQuery(this);
+        var $childList = $li.children('ol');
+        if ($childList.length === 0) {
+          if ($li.children('.toc-toggle').length === 0) {
+            $li.prepend('<span class="toc-toggle toc-toggle-placeholder" aria-hidden="true">›</span>');
+          }
+          return;
+        }
+
+        if ($li.children('.toc-toggle').length === 0) {
+          $li.prepend('<span class="toc-toggle toc-toggle-expanded" aria-hidden="true">›</span>');
+        }
+        updateTocToggle($li, $childList);
+      });
+      jQuery('#toc-body').off('click.tocToggle').on('click.tocToggle', '.toc-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var $li = jQuery(this).parent('.toc-list-item');
+        var $childList = $li.children('ol');
+        if ($childList.length === 0) { return; }
+        $childList.toggleClass('tocbot-is-collapsed');
+        updateTocToggle($li, $childList);
+      });
+      if (!window.__tocToggleObserver) {
+        window.__tocToggleObserver = new MutationObserver(function(mutations) {
+          mutations.forEach(function(mutation) {
+            if (mutation.type !== 'attributes' || mutation.attributeName !== 'class') { return; }
+            var $list = jQuery(mutation.target);
+            var $li = $list.parent('.toc-list-item');
+            if ($li.length === 0) { return; }
+            updateTocToggle($li, $list);
+          });
+        });
+        jQuery('#toc-body ol').each(function() {
+          window.__tocToggleObserver.observe(this, { attributes: true });
+        });
+      }
+    }
+    var tocConfig = Object.assign({
+      tocSelector     : '#toc-body',
+      contentSelector : '.markdown-body',
+      linkClass       : 'tocbot-link',
+      activeLinkClass : 'tocbot-active-link',
+      listClass       : 'tocbot-list',
+      isCollapsedClass: 'tocbot-is-collapsed',
+      collapsibleClass: 'tocbot-is-collapsible',
+      scrollSmooth    : true,
+      includeTitleTags: true,
+      headingsOffset  : -boardTop,
+    }, CONFIG.toc);
+    if (isExpandAllEnabled()) {
+      tocConfig.collapseDepth = 6;
+    }
+    window.tocbot.init(tocConfig);
+    if (toc.find('.toc-list-item').length > 0) {
+      toc.css('visibility', 'visible');
+    }
+    expandAllToc();
+    bindTocToggle();
+
+    Fluid.events.registerRefreshCallback(function() {
+      if ('tocbot' in window) {
+        tocbot.refresh();
+        var toc = jQuery('#toc');
+        if (toc.length === 0 || !tocbot) {
+          return;
+        }
+        if (toc.find('.toc-list-item').length > 0) {
+          toc.css('visibility', 'visible');
+        }
+        expandAllToc();
+        bindTocToggle();
+      }
+    });
+  });
+</script>
+
+
+  <script  src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js" ></script>
+
+  <script src=https://lib.baomitu.com/clipboard.js/2.0.11/clipboard.min.js></script>
+
+  <script>Fluid.plugins.codeWidget();</script>
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/anchor-js/5.0.0/anchor.min.js', function() {
+    window.anchors.options = {
+      placement: CONFIG.anchorjs.placement,
+      visible  : CONFIG.anchorjs.visible
+    };
+    if (CONFIG.anchorjs.icon) {
+      window.anchors.options.icon = CONFIG.anchorjs.icon;
+    }
+    var el = (CONFIG.anchorjs.element || 'h1,h2,h3,h4,h5,h6').split(',');
+    var res = [];
+    for (var item of el) {
+      res.push('.markdown-body > ' + item.trim());
+    }
+    if (CONFIG.anchorjs.placement === 'left') {
+      window.anchors.options.class = 'anchorjs-link-left';
+    }
+    window.anchors.add(res.join(', '));
+
+    Fluid.events.registerRefreshCallback(function() {
+      if ('anchors' in window) {
+        anchors.removeAll();
+        var el = (CONFIG.anchorjs.element || 'h1,h2,h3,h4,h5,h6').split(',');
+        var res = [];
+        for (var item of el) {
+          res.push('.markdown-body > ' + item.trim());
+        }
+        if (CONFIG.anchorjs.placement === 'left') {
+          anchors.options.class = 'anchorjs-link-left';
+        }
+        anchors.add(res.join(', '));
+      }
+    });
+  });
+</script>
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/fancybox/3.5.7/jquery.fancybox.min.js', function() {
+    Fluid.plugins.fancyBox();
+  });
+</script>
+
+
+  <script>Fluid.plugins.imageCaption();</script>
+
+  <script  src="/js/local-search.js" ></script>
+
+
+
+
+
+<!-- 主题的启动项，将它保持在最底部 -->
+<!-- the boot of the theme, keep it at the bottom -->
+<script  src="/js/boot.js" ></script>
+
+
+  
+
+  <noscript>
+    <div class="noscript-warning">博客在允许 JavaScript 运行的环境下浏览效果更佳</div>
+  </noscript>
+</body>
+</html>
